@@ -1,3 +1,5 @@
+#![allow(dead_code, non_snake_case)]
+
 /// Implementação pura de SHA-256 em Rust (sem dependências externas).
 /// Usada para computar chaves de conteúdo determinísticas e multiplataforma.
 

@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::store::{ContentStore, module_key};
 use crate::sha256::sha256_hex;
 use std::fs;
@@ -83,6 +85,7 @@ impl BenchSuite {
                     imports: Vec::new(),
                     artifact_extensions: vec!["olean".to_string(), "ilean".to_string(), "c".to_string(), "o".to_string()],
                     built_at_ns: None,
+                    last_accessed_ns: None,
                 },
             )?;
             misses += 1;

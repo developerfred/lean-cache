@@ -1,69 +1,66 @@
+#![allow(dead_code)]
+
+use crate::compression::{compress_file, decompress_file, CompressionAlgorithm};
 use crate::sha256::{combine_hashes, sha256_hex};
 use std::collections::HashSet;
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::time::{SystemTime, UNIX_EPOCH};
 
-fn now_ns() -> u128 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0)
-}
-
-/// Comprime um arquivo com gzip. Retorna o caminho do arquivo comprimido (.gz).
-fn compress_gzip(src: &Path, dst: &Path) -> std::io::Result<()> {
-    let input = fs::File::open(src)?;
-    let output = fs::File::create(dst)?;
-    let mut child = Command::new("gzip")
-        .arg("-c")
-        .stdin(input)
-        .stdout(output)
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::NotFound, format!("gzip não encontrado: {}", e)))?;
-    let status = child.wait()?;
-    if !status.success() {
-        return Err(std::io::Error::new(std::io::ErrorKind::Other, "gzip falhou"));
+/// Valida uma chave de cache para prevenir path traversal.
+///
+/// Regras:
+/// - Não pode conter `..`
+/// - Não pode começar com `/`
+/// - Não pode conter byte nulo
+/// - Não pode ser vazia
+pub fn validate_cache_key(key: &str) -> std::io::Result<()> {
+    if key.is_empty() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "chave de cache não pode estar vazia",
+        ));
+    }
+    if key.contains('\0') {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "chave de cache não pode conter byte nulo",
+        ));
+    }
+    if key.starts_with('/') || key.starts_with("./") {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "chave de cache não pode começar com / ou ./",
+        ));
+    }
+    if key.contains("..") {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "chave de cache não pode conter path traversal (..)",
+        ));
     }
     Ok(())
-}
-
-/// Descomprime um arquivo .gz com gzip.
-fn decompress_gzip(src: &Path, dst: &Path) -> std::io::Result<()> {
-    let input = fs::File::open(src)?;
-    let output = fs::File::create(dst)?;
-    let mut child = Command::new("gzip")
-        .arg("-d")
-        .arg("-c")
-        .stdin(input)
-        .stdout(output)
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::NotFound, format!("gzip não encontrado: {}", e)))?;
-    let status = child.wait()?;
-    if !status.success() {
-        return Err(std::io::Error::new(std::io::ErrorKind::Other, "gzip -d falhou"));
-    }
-    Ok(())
-}
-
-/// Verifica se o gzip está disponível no sistema.
-fn gzip_available() -> bool {
-    Command::new("gzip").arg("--version").stdout(Stdio::null()).stderr(Stdio::null()).status().map(|s| s.success()).unwrap_or(false)
 }
 
 /// Artefatos produzidos por um módulo Lean (facetas do Lake).
+#[allow(dead_code)]
 pub const ARTIFACT_EXTENSIONS: &[&str] = &["olean", "ilean", "c", "o"];
 
 /// Configuração do store de cache.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct CacheConfig {
     pub lean_version: Option<String>,
     pub default_flags: Vec<String>,
     pub store_dir: PathBuf,
+    /// Tamanho mínimo (bytes) acima do qual um artefato é comprimido.
+    /// Arquivos menores são armazenados cru para evitar overhead de compressão.
+    pub compress_min_bytes: u64,
+    /// Algoritmo de compressão usado para armazenar artefatos.
+    pub compression: CompressionAlgorithm,
+    /// Se verdadeiro, usa hard-link (quando disponível) em vez de cópia na restauração.
+    pub hard_link_on_restore: bool,
+    /// Quota máxima do store em bytes. 0 = sem limite.
+    pub max_store_bytes: u64,
 }
 
 impl Default for CacheConfig {
@@ -72,13 +69,19 @@ impl Default for CacheConfig {
             lean_version: None,
             default_flags: Vec::new(),
             store_dir: PathBuf::from(".lean-cache"),
+            compress_min_bytes: 65536, // 64 KB: so comprime arquivos grandes
+            compression: CompressionAlgorithm::best_available(CompressionAlgorithm::Zstd),
+            hard_link_on_restore: true,
+            max_store_bytes: 0,
         }
     }
 }
 
 /// O store endereçável por conteúdo. Artefatos são guardados em
 /// `<store_dir>/objects/<chave[0:2]>/<chave>/`.
+#[allow(dead_code)]
 pub struct ContentStore {
+    #[allow(dead_code)]
     pub config: CacheConfig,
     pub objects_root: PathBuf,
 }
@@ -97,6 +100,7 @@ impl ContentStore {
         })
     }
 
+    #[allow(dead_code)]
     pub fn with_config(config: CacheConfig) -> std::io::Result<Self> {
         fs::create_dir_all(&config.store_dir)?;
         let objects_root = config.store_dir.join("objects");
@@ -109,6 +113,7 @@ impl ContentStore {
 
     /// Caminho da pasta de objetos para uma chave.
     pub fn object_dir_for(&self, key: &str) -> PathBuf {
+        validate_cache_key(key).expect("chave de cache inválida");
         let prefix = &key[..2.min(key.len())];
         self.objects_root.join(prefix).join(key)
     }
@@ -120,11 +125,12 @@ impl ContentStore {
     }
 
     /// Armazena um conjunto de artefatos (caminhos de arquivo) sob uma chave.
-    /// Cada artefato é comprimido com gzip e salvo como `<object_dir>/<nome>.gz`.
+    /// Cada artefato é comprimido com o algoritmo configurado (se acima de compress_min_bytes)
+    /// e salvo como `<object_dir>/<nome><ext>`. Arquivos pequenos são armazenados cru.
     pub fn store(&self, key: &str, artifacts: &[PathBuf]) -> std::io::Result<()> {
         let dir = self.object_dir_for(key);
         fs::create_dir_all(&dir)?;
-        let use_gzip = gzip_available();
+        let use_compression = self.config.compression != CompressionAlgorithm::None;
         for artifact in artifacts {
             if artifact.is_file() {
                 let file_name = artifact
@@ -133,13 +139,19 @@ impl ContentStore {
                         std::io::Error::new(std::io::ErrorKind::InvalidInput, "sem nome de arquivo")
                     })?
                     .to_os_string();
-                let dest = if use_gzip {
-                    dir.join(format!("{}.gz", file_name.to_string_lossy()))
+                let meta = fs::metadata(artifact)?;
+                let should_compress = use_compression && meta.len() >= self.config.compress_min_bytes;
+                let dest = if should_compress {
+                    dir.join(format!(
+                        "{}{}",
+                        file_name.to_string_lossy(),
+                        self.config.compression.extension()
+                    ))
                 } else {
                     dir.join(file_name)
                 };
-                if use_gzip {
-                    compress_gzip(artifact, &dest)?;
+                if should_compress {
+                    compress_file(artifact, &dest, self.config.compression)?;
                 } else {
                     fs::copy(artifact, &dest)?;
                 }
@@ -150,6 +162,7 @@ impl ContentStore {
 
     /// Restaura todos os artefatos de uma chave para um diretório de destino.
     /// Retorna a lista de arquivos restaurados.
+    /// Usa hard-link (quando disponível e habilitado) para evitar cópia de disco.
     pub fn restore(&self, key: &str, dest_dir: &Path) -> std::io::Result<Vec<PathBuf>> {
         let dir = self.object_dir_for(key);
         if !dir.is_dir() {
@@ -157,19 +170,33 @@ impl ContentStore {
         }
         fs::create_dir_all(dest_dir)?;
         let mut restored = Vec::new();
-        let use_gzip = gzip_available();
+        let compression = self.config.compression;
         for entry in fs::read_dir(dir)? {
             let entry = entry?;
             let path = entry.path();
             if path.is_file() {
                 let file_name = path.file_name().unwrap().to_os_string();
                 let name_str = file_name.to_string_lossy().to_string();
-                if use_gzip && name_str.ends_with(".gz") {
-                    // Descomprimir .gz para o nome original (sem .gz)
-                    let original_name = name_str.strip_suffix(".gz").unwrap_or(&name_str);
+                // Detecta se o arquivo está comprimido pela extensão do algoritmo configurado.
+                if compression != CompressionAlgorithm::None
+                    && name_str.ends_with(compression.extension())
+                {
+                    let original_name = name_str
+                        .strip_suffix(compression.extension())
+                        .unwrap_or(&name_str);
                     let dest = dest_dir.join(original_name);
-                    decompress_gzip(&path, &dest)?;
+                    decompress_file(&path, &dest, compression)?;
                     restored.push(dest);
+                } else if self.config.hard_link_on_restore {
+                    // Tenta hard-link para evitar cópia de disco.
+                    let dest = dest_dir.join(&file_name);
+                    if std::fs::hard_link(&path, &dest).is_ok() {
+                        restored.push(dest);
+                    } else {
+                        // Fallback para cópia se hard-link não suportado (ex. FAT32, cross-device).
+                        fs::copy(&path, &dest)?;
+                        restored.push(dest);
+                    }
                 } else {
                     let dest = dest_dir.join(file_name);
                     fs::copy(&path, &dest)?;
@@ -181,6 +208,7 @@ impl ContentStore {
     }
 
     /// Remove uma chave do store.
+    #[allow(dead_code)]
     pub fn remove(&self, key: &str) -> std::io::Result<bool> {
         let dir = self.object_dir_for(key);
         if dir.is_dir() {
@@ -251,6 +279,68 @@ impl ContentStore {
         Ok(())
     }
 
+    /// Executa garbage collection LRU: remove entradas menos recentemente acessadas
+    /// quando o store excede max_store_bytes. Retorna (chaves_removidas, bytes_liberados).
+    pub fn cache_gc(&self) -> std::io::Result<(usize, u64)> {
+        let max_bytes = self.config.max_store_bytes;
+        if max_bytes == 0 {
+            return Ok((0, 0));
+        }
+
+        let current_size = self.size_bytes()?;
+        if current_size <= max_bytes {
+            return Ok((0, 0));
+        }
+
+        // Coleta todas as chaves com seus last_accessed_ns e tamanho.
+        let mut entries: Vec<(String, Option<u128>, u64)> = Vec::new();
+        for key in self.list_keys()? {
+            let size = self.key_size_bytes(&key)?;
+            let last_accessed = self.load_trace(&key)?.and_then(|t| t.last_accessed_ns);
+            entries.push((key, last_accessed, size));
+        }
+
+        // Ordena por last_accessed_ns (None primeiro = nunca acessado = mais velho).
+        entries.sort_by(|a, b| match (a.1, b.1) {
+            (Some(na), Some(nb)) => na.cmp(&nb),
+            (None, Some(_)) => std::cmp::Ordering::Less,
+            (Some(_), None) => std::cmp::Ordering::Greater,
+            (None, None) => std::cmp::Ordering::Equal,
+        });
+
+        let mut removidas = 0usize;
+        let mut liberados = 0u64;
+        let mut accumulated = current_size;
+
+        for (key, _last_accessed, size) in entries {
+            if accumulated <= max_bytes {
+                break;
+            }
+            if self.remove(&key)? {
+                removidas += 1;
+                liberados += size;
+                accumulated = accumulated.saturating_sub(size);
+            }
+        }
+
+        Ok((removidas, liberados))
+    }
+
+    /// Tamanho em bytes de uma chave específica.
+    fn key_size_bytes(&self, key: &str) -> std::io::Result<u64> {
+        let mut total = 0u64;
+        let dir = self.object_dir_for(key);
+        if dir.is_dir() {
+            for entry in fs::read_dir(dir)? {
+                let entry = entry?;
+                if let Ok(meta) = entry.metadata() {
+                    total += meta.len();
+                }
+            }
+        }
+        Ok(total)
+    }
+
     /// Salva o trace associado a uma chave (formato texto simples, linha a linha).
     pub fn save_trace(&self, key: &str, trace: &TraceRecord) -> std::io::Result<()> {
         let dir = self.object_dir_for(key);
@@ -265,10 +355,14 @@ impl ContentStore {
         if let Some(ns) = trace.built_at_ns {
             lines.push(format!("built_at_ns:{}", ns));
         }
+        if let Some(ns) = trace.last_accessed_ns {
+            lines.push(format!("last_accessed_ns:{}", ns));
+        }
         fs::write(dir.join("trace.txt"), lines.join("\n") + "\n")
     }
 
     /// Lê o trace de uma chave, se existir.
+    #[allow(dead_code)]
     pub fn load_trace(&self, key: &str) -> std::io::Result<Option<TraceRecord>> {
         let path = self.object_dir_for(key).join("trace.txt");
         if path.is_file() {
@@ -282,6 +376,7 @@ impl ContentStore {
 
 /// Registro de trace de um módulo Lean. O que determina se o módulo precisa ser recompilado.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct TraceRecord {
     pub module: String,
     pub source_file: String,
@@ -289,8 +384,10 @@ pub struct TraceRecord {
     pub lean_version: Option<String>,
     pub flags: Vec<String>,
     pub imports: Vec<String>,
+    #[allow(dead_code)]
     pub artifact_extensions: Vec<String>,
     pub built_at_ns: Option<u128>,
+    pub last_accessed_ns: Option<u128>,
 }
 
 impl TraceRecord {
@@ -302,6 +399,7 @@ impl TraceRecord {
         let mut flags: Vec<String> = Vec::new();
         let mut imports: Vec<String> = Vec::new();
         let mut built_at_ns: Option<u128> = None;
+        let mut last_accessed_ns: Option<u128> = None;
 
         for line in text.lines() {
             if let Some(rest) = line.strip_prefix("module:") {
@@ -322,6 +420,8 @@ impl TraceRecord {
                 }
             } else if let Some(rest) = line.strip_prefix("built_at_ns:") {
                 built_at_ns = rest.parse().ok();
+            } else if let Some(rest) = line.strip_prefix("last_accessed_ns:") {
+                last_accessed_ns = rest.parse().ok();
             }
         }
         Ok(Self {
@@ -333,6 +433,7 @@ impl TraceRecord {
             imports,
             artifact_extensions: ARTIFACT_EXTENSIONS.iter().map(|s| s.to_string()).collect(),
             built_at_ns,
+            last_accessed_ns,
         })
     }
 }
@@ -362,6 +463,7 @@ pub fn module_key(
 }
 
 /// Hash simples do conteúdo de um arquivo para uso no trace.
+#[allow(dead_code)]
 pub fn hash_file(path: &Path) -> std::io::Result<String> {
     let data = fs::read(path)?;
     Ok(sha256_hex(&data))

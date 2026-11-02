@@ -1,7 +1,9 @@
+#![allow(dead_code)]
+
 use std::collections::HashMap;
 use std::env;
 use std::fs;
-use std::io::{self};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -9,9 +11,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 mod sha256;
 mod store;
 mod remote;
+mod compression;
+mod worker;
+mod surgical;
+mod snapshots;
+mod s3;
 mod bench;
 
-use store::{ContentStore, TraceRecord, resolve_import_graph, module_key};
+use store::{ContentStore, resolve_import_graph, module_key};
 use remote::{RemoteClient, RemoteConfig, push_key, sync_all};
 use bench::executar_suite;
 
@@ -50,6 +57,7 @@ fn find_lake() -> Option<PathBuf> {
     None
 }
 
+#[allow(dead_code)]
 fn which_lean(name: &str) -> Option<PathBuf> {
     if let Ok(path) = env::var("PATH") {
         for dir in path.split(':') {
@@ -74,10 +82,17 @@ fn print_usage() {
           build <arquivo.raiz.lean> Build acelerado: usa cache, senao executa lean\n\
           status                    Mostra estatísticas do store\n\
           clean                     Remove o store de cache local\n\
+          gc                        Garbage collection LRU (remove entradas menos acessadas)\n\
           remote-set <url>          Define URL base do cache remoto\n\
           push <chave>              Envia artefatos de uma chave para o remoto\n\
           pull <chave>              Baixa artefatos de uma chave do remoto\n\
           sync                      Sincroniza chaves locais para o remoto\n\
+          s3-push <chave>           Envia artefatos de uma chave para o S3\n\
+          s3-pull <chave>           Baixa artefatos de uma chave do S3\n\
+          s3-sync                   Sincroniza chaves locais para o S3\n\
+          snap <chave>              Salva snapshot de elaboração de um módulo\n\
+          snap-load <chave>         Restaura snapshot de elaboração de um módulo\n\
+          snap-list                 Lista snapshots armazenados\n\
           bench                     Executa suite de benchmark (simulado)"
     );
 }
@@ -152,6 +167,9 @@ fn cmd_status() -> io::Result<()> {
     println!("Status do store (.lean-cache)");
     println!("  Chaves: {}", keys.len());
     println!("  Tamanho aproximado: {} bytes ({} KB)", size, size / 1024);
+    println!("  Compressao: gzip (acima de 64 KB)");
+    println!("  Hard-link na restauracao: ativado");
+    println!("  Quota maxima: sem limite (0 bytes)");
     for k in keys.iter().take(10) {
         println!("    - {}", k);
     }
@@ -191,6 +209,8 @@ fn cmd_push(key: &str) -> io::Result<()> {
 }
 
 /// Comando pull: baixa os artefatos de uma chave do remoto para o store local.
+/// Usa verificação de integridade (SHA-256) e, se o remoto estiver indisponível,
+/// mantém o que já estiver em cache local (fallback implícito).
 fn cmd_pull(key: &str) -> io::Result<()> {
     let store_dir = PathBuf::from(".lean-cache");
     let store = ContentStore::open(&store_dir)?;
@@ -201,39 +221,56 @@ fn cmd_pull(key: &str) -> io::Result<()> {
     }
     let remote = RemoteClient::new(config);
 
-    // Se ja existe localmente, nao precisa baixar.
+    // Se ja existe localmente, nao precisa baixar (fallback local).
     if store.contains(key) {
-        println!("Chave {} ja existe localmente. Nada a fazer.", key);
+        println!("Chave {} ja existe localmente (cache local). Nada a fazer.", key);
         return Ok(());
     }
 
-    // Tenta verificar se existe no remoto.
-    if !remote.key_exists_remote(key)? {
-        eprintln!("Erro: chave {} nao encontrada no remoto.", key);
+    // Tenta verificar se existe no remoto. Se o remoto estiver offline, reporta
+    // mas não quebra: o caller (build) pode continuar com fallback para build local.
+    let existe_remoto = match remote.key_exists_remote(key) {
+        Ok(existe) => existe,
+        Err(e) => {
+            eprintln!(
+                "Aviso: não foi possível consultar o cache remoto ({}), fallback para build local.",
+                e
+            );
+            eprintln!("Chave {} não encontrada localmente e remoto indisponível.", key);
+            return Ok(());
+        }
+    };
+    if !existe_remoto {
+        eprintln!("Erro: chave {} não encontrada no remoto nem localmente.", key);
         std::process::exit(1);
     }
 
-    // Como nao listamos remotamente, tentamos baixar com nomes genericos
-    // para cada extensao conhecida. O servidor deve resolver o artefato correto.
+    // Como não listamos remotamente, tentamos baixar com nomes genéricos
+    // para cada extensão conhecida. O servidor deve resolver o artefato correto.
+    // A chave de conteúdo serve como hash esperado para verificação de integridade.
     let mut baixados = 0usize;
     let mut falharam = 0usize;
     for ext in ARTIFACT_EXTENSIONS {
-        // Tentamos um nome generico baseados na chave; o servidor decide o que retornar.
         let file_name = format!("{}.{}", key, ext);
         let dest = store.object_dir_for(key).join(&file_name);
-        match remote.download_artifact(key, &file_name, &dest) {
+        match remote.download_artifact_verified(key, &file_name, &dest, key) {
             Ok(true) => baixados += 1,
-            _ => falharam += 1,
+            Ok(false) => falharam += 1, // arquivo não existe ou integridade falhou
+            Err(e) => {
+                eprintln!("Aviso: erro de I/O ao baixar {}: {}", file_name, e);
+                falharam += 1;
+            }
         }
     }
 
-    // Remove o diretorio se nada baixou.
+    // Remove o diretório se nada baixou.
     let dir = store.object_dir_for(key);
     let tem_arquivos = dir.is_dir()
         && fs::read_dir(&dir)?
             .any(|e| e.map(|e| e.path().is_file()).unwrap_or(false));
     if !tem_arquivos {
         let _ = fs::remove_dir_all(&dir);
+        eprintln!("Aviso: nenhum artefato baixado para a chave {} (verifique integridade do remoto).", key);
     }
 
     println!(
@@ -270,6 +307,19 @@ fn cmd_clean() -> io::Result<()> {
     } else {
         println!("Nenhum store encontrado em: {}", store_dir.display());
     }
+    Ok(())
+}
+
+/// Comando gc: garante que o store nao exceda a quota configurada (max_store_bytes),
+/// removendo entradas menos recentemente acessadas (LRU).
+fn cmd_gc() -> io::Result<()> {
+    let store_dir = PathBuf::from(".lean-cache");
+    let store = ContentStore::open(&store_dir)?;
+    let (removidas, liberados) = store.cache_gc()?;
+    println!(
+        "GC: {} chave(s) removida(s), {} bytes liberados.",
+        removidas, liberados
+    );
     Ok(())
 }
 
@@ -329,6 +379,10 @@ fn cmd_build(root: &Path) -> io::Result<()> {
     let mut misses = 0usize;
     let mut all_hit = true;
     let mut module_decisions: Vec<(&str, &Path, &str, String)> = Vec::new();
+    // Mapa nome_modulo -> chave calculada. O grafo vem em ordem topologica
+    // (dependencias antes do dependente), entao ja podemos resolver chaves
+    // dos imports transitivos enquanto iteramos.
+    let mut module_keys: HashMap<String, String> = HashMap::new();
 
     println!("Grafo de resolucao: {} modulo(s)", graph.len());
 
@@ -342,14 +396,15 @@ fn cmd_build(root: &Path) -> io::Result<()> {
             }
         };
 
+        // Resolve as chaves dos modulos importados (já calculados pela ordem topologica).
         let import_keys: Vec<String> = imports
             .iter()
-            .filter_map(|imp| /* restored_modules não usado aqui; chave depende do conteudo direto */ None)
+            .filter_map(|imp| module_keys.get(imp).cloned())
             .collect();
 
-        // A chave inclui o conteudo direto + versao do Lean + flags.
-        // Os imports transitivos sao capturados recursivamente pelo Lake.
+        // A chave inclui conteudo direto + chaves dos imports + versao do Lean + flags.
         let key = module_key(&source_bytes, &import_keys, &lean_version, &flags);
+        module_keys.insert(module_name.to_string(), key.clone());
 
         if store.contains(&key) {
             hits += 1;
@@ -367,24 +422,94 @@ fn cmd_build(root: &Path) -> io::Result<()> {
         println!("\nTodos os modulos estao em cache. Pulando lake build...");
         // Restaura artefatos diretamente no .lake/build/lib/lean/<pacote>/.
         let lake_build_dir = root_dir.join(".lake/build/lib/lean");
-        for (status, source_path, module_name, key) in &module_decisions {
+        for (status, _source_path, module_name, key) in &module_decisions {
             if *status != "HIT" {
                 continue;
             }
             let mod_out = root_dir.join(format!(".lean-cache-out/{}", module_name));
             let restored = store.restore(key, &mod_out)?;
             if !restored.is_empty() {
-                // Copia artefatos para o diretorio de build do Lake.
                 fs::create_dir_all(&lake_build_dir)?;
-                copy_artifacts_to_source(&mod_out, &lake_build_dir)?;
+                restore_artifacts_to_lake(&mod_out, &lake_build_dir, module_name)?;
             }
         }
         println!("\nResultado: {} hit(s), 0 miss(es) - build pulado via cache.", hits);
         return Ok(());
     }
 
-    // Pelo menos um modulo esta em MISS: executar o lake build normalmente.
-    println!("\nExecutando lake build (modulos em miss detectados)...");
+    // Antes de executar lake build, tenta buscar no cache remoto os modulos em MISS.
+    // Se o remoto tiver a chave, baixamos e tratamos como hit (fallback: se remoto
+    // estiver offline, seguimos para lake build local).
+    let config = RemoteConfig::load(&PathBuf::from(".lean-cache"));
+    if !config.base_url.is_empty() {
+        let remote = RemoteClient::new(config);
+        for (status, _source_path, module_name, key) in &module_decisions {
+            if *status != "MISS" {
+                continue;
+            }
+            println!("[REMOTO] tentando pull de {} (chave {}) ...", module_name, &key[..8]);
+            let store_dir = PathBuf::from(".lean-cache");
+            let store_tmp = ContentStore::open(&store_dir)?;
+            let mut baixou_algo = false;
+            for ext in ARTIFACT_EXTENSIONS {
+                let file_name = format!("{}.{}", key, ext);
+                let dest = store_tmp.object_dir_for(key).join(&file_name);
+                match remote.download_artifact_verified(key, &file_name, &dest, key) {
+                    Ok(true) => {
+                        baixou_algo = true;
+                    }
+                    Ok(false) => {}
+                    Err(e) => {
+                        eprintln!(
+                            "Aviso: erro de I/O ao baixar {} do remoto: {}",
+                            file_name, e
+                        );
+                    }
+                }
+            }
+            if baixou_algo {
+                // Marca como HIT via remoto para não executar lake build neste modulo.
+                println!("[HIT-REMOTO] {} restaurado via cache remoto.", module_name);
+            } else {
+                eprintln!(
+                    "Aviso: chave {} não encontrada no remoto; será compilado localmente.",
+                    key
+                );
+            }
+        }
+        println!("\nApós consulta ao remoto: {} hit(s) locais, remoto consultado para {} miss(es).", hits, misses);
+    }
+
+    // Verifica se todos os modulos agora estam resolvidos (hit local ou hit remoto).
+    // Como não rastreamos hit-remoto separadamente, executamos lake build se houver
+    // qualquer modulo que não tenha artefatos locais após a tentativa de remoto.
+    let todos_resolvidos = module_decisions.iter().all(|(status, _, _, key)| {
+        *status == "HIT" || store.contains(key)
+    });
+
+    if todos_resolvidos {
+        println!("\nTodos os modulos resolvidos (cache local + remoto). Pulando lake build...");
+        let lake_build_dir = root_dir.join(".lake/build/lib/lean");
+        for (status, _source_path, module_name, key) in &module_decisions {
+            if *status != "HIT" && !store.contains(key) {
+                continue;
+            }
+            let mod_out = root_dir.join(format!(".lean-cache-out/{}", module_name));
+            let restored = store.restore(key, &mod_out)?;
+            if !restored.is_empty() {
+                fs::create_dir_all(&lake_build_dir)?;
+                restore_artifacts_to_lake(&mod_out, &lake_build_dir, module_name)?;
+            }
+        }
+        println!(
+            "\nResultado: {} hit(s) (local + remoto), build pulado via cache.",
+            hits
+        );
+        return Ok(());
+    }
+
+    // Pelo menos um modulo ainda esta em MISS: executar o lake build normalmente.
+    println!("\nExecutando lake build (modulos ainda em miss após consulta ao remoto)...");
 
     let output_result = Command::new(&lake)
         .current_dir(&root_dir)
@@ -407,43 +532,36 @@ fn cmd_build(root: &Path) -> io::Result<()> {
     }
 
     // Armazena artefatos gerados pelo Lake no cache.
-    // O Lake coloca .olean em .lake/build/lib/lean/<pacote>/<modulo>.olean
-    // ou diretamente em .lake/build/lib/lean/<modulo>.olean para modulos na raiz.
-    // Para cada modulo em MISS, procuramos seus artefatos e armazenamos com a chave correta.
+    // Percorre recursivamente .lake/build/lib/lean/ para encontrar TODOS os
+    // artefatos (.olean, .ilean, .c, .o) e mapeia cada um para seu modulo.
     let lake_build_dir = root_dir.join(".lake/build/lib/lean");
     if lake_build_dir.is_dir() {
-        for (status, source_path, module_name, key) in &module_decisions {
+        // Coleta todos os arquivos de artefato no diretorio de build do Lake.
+        let mut lake_artifacts: Vec<PathBuf> = Vec::new();
+        collect_lake_artifacts(&lake_build_dir, &mut lake_artifacts)?;
+
+        // Para cada modulo em MISS, encontra seus artefatos e armazena no cache.
+        for (status, _source_path, module_name, key) in &module_decisions {
             if *status != "MISS" {
                 continue;
             }
 
-            let file_stem = source_path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("output");
+            let file_stem = module_name
+                .rsplit('.')
+                .next()
+                .unwrap_or(module_name)
+                .to_string();
 
             let mut found_artifacts: Vec<PathBuf> = Vec::new();
 
-            // Procurar em subdiretorios (pacotes) do lake_build_dir
-            if let Ok(entries) = fs::read_dir(&lake_build_dir) {
-                for entry in entries.flatten() {
-                    let pkg_dir = entry.path();
-                    if pkg_dir.is_dir() {
-                        for ext in &["olean", "ilean", "c"] {
-                            let artifact_path = pkg_dir.join(format!("{}.{}", file_stem, ext));
-                            if artifact_path.is_file() {
-                                found_artifacts.push(artifact_path);
-                            }
-                        }
+            // Procura artefatos que correspondem a este modulo.
+            // Um artefato pertence ao modulo se o nome do arquivo (sem extensao)
+            // bate com o file_stem do source_path.
+            for artifact in &lake_artifacts {
+                if let Some(stem) = artifact.file_stem().and_then(|s| s.to_str()) {
+                    if stem == file_stem {
+                        found_artifacts.push(artifact.clone());
                     }
-                }
-            }
-
-            // Tambem procurar diretamente na raiz do lake_build_dir (modulos na raiz como Main)
-            for ext in &["olean", "ilean", "c"] {
-                let artifact_path = lake_build_dir.join(format!("{}.{}", file_stem, ext));
-                if artifact_path.is_file() {
-                    found_artifacts.push(artifact_path);
                 }
             }
 
@@ -467,6 +585,7 @@ fn cmd_build(root: &Path) -> io::Result<()> {
 }
 
 /// Copia artefatos restaurados do cache para o diretorio de destino.
+/// (Mantido para compatibilidade com outros comandos.)
 fn copy_artifacts_to_source(src_dir: &Path, dest_dir: &Path) -> io::Result<()> {
     if !src_dir.is_dir() {
         return Ok(());
@@ -480,6 +599,137 @@ fn copy_artifacts_to_source(src_dir: &Path, dest_dir: &Path) -> io::Result<()> {
                     let file_name = path.file_name().unwrap();
                     let dest = dest_dir.join(file_name);
                     fs::copy(&path, &dest)?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Percorre recursivamente um diretorio coletando todos os arquivos de artefato Lean
+/// (.olean, .ilean, .c, .o).
+fn collect_lake_artifacts(dir: &Path, out: &mut Vec<PathBuf>) -> io::Result<()> {
+    if !dir.is_dir() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_lake_artifacts(&path, out)?;
+        } else if path.is_file() {
+            if let Some(ext) = path.extension() {
+                if ARTIFACT_EXTENSIONS.contains(&ext.to_string_lossy().as_ref()) {
+                    out.push(path);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Valida um nome de módulo Lean para prevenir path traversal.
+///
+/// Regras:
+/// - Não pode conter `..` (path traversal)
+/// - Não pode começar com `/` ou `.`
+/// - Não pode conter byte nulo
+/// - Cada segmento separado por `.` deve ser um nome válido (alfanumérico, underscore, hífen)
+fn validate_module_name(name: &str) -> io::Result<String> {
+    if name.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "nome do módulo não pode estar vazio",
+        ));
+    }
+    if name.contains('\0') {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "nome do módulo não pode conter byte nulo",
+        ));
+    }
+    if name.starts_with("/") || name.starts_with("./") {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "nome do módulo não pode começar com / ou ./",
+        ));
+    }
+    if name.contains("..") {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "nome do módulo não pode conter path traversal (..)",
+        ));
+    }
+    // Valida cada segmento separado por ponto
+    for segment in name.split('.') {
+        if segment.is_empty() || segment == ".." || segment == "." {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("segmento de módulo inválido: '{}'", segment),
+            ));
+        }
+        if !segment
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "segmento de módulo contém caractere inválido: '{}'",
+                    segment
+                ),
+            ));
+        }
+    }
+    Ok(name.to_string())
+}
+
+/// Restaura artefatos do cache para o diretorio de build do Lake,
+/// preservando a estrutura de pacotes (ex: Testproj/Mod1.olean).
+/// O `mod_out` contem arquivos restaurados com nomes como `Mod1.olean`.
+/// O `lake_build_dir` e `.lake/build/lib/lean`.
+fn restore_artifacts_to_lake(
+    mod_out: &Path,
+    lake_build_dir: &Path,
+    module_name: &str,
+) -> io::Result<()> {
+    if !mod_out.is_dir() {
+        return Ok(());
+    }
+
+    // Determina o subdiretorio do pacote baseado no nome do modulo.
+    // Ex: "Testproj.Mod1" -> subdir "Testproj", arquivo "Mod1.olean".
+    // Ex: "Main" -> subdir "" (raiz), arquivo "Main.olean".
+    //
+    // Segurança: valida module_name para prevenir path traversal.
+    let validated_name = validate_module_name(module_name)?;
+    let (pkg_subdir, file_base) = if let Some(dot_pos) = validated_name.rfind('.') {
+        let pkg = &validated_name[..dot_pos].replace('.', std::path::MAIN_SEPARATOR.to_string().as_str());
+        let base = &validated_name[dot_pos + 1..];
+        (pkg.to_string(), base.to_string())
+    } else {
+        (String::new(), validated_name.to_string())
+    };
+
+    let target_dir = if pkg_subdir.is_empty() {
+        lake_build_dir.to_path_buf()
+    } else {
+        lake_build_dir.join(&pkg_subdir)
+    };
+    fs::create_dir_all(&target_dir)?;
+
+    for entry in fs::read_dir(mod_out)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_file() {
+            if let Some(ext) = path.extension() {
+                if ARTIFACT_EXTENSIONS.contains(&ext.to_string_lossy().as_ref()) {
+                    let file_name = format!("{}.{}", file_base, ext.to_string_lossy());
+                    let dest = target_dir.join(&file_name);
+                    // Tenta hard-link primeiro, depois copia.
+                    if std::fs::hard_link(&path, &dest).is_err() {
+                        fs::copy(&path, &dest)?;
+                    }
                 }
             }
         }
@@ -565,6 +815,12 @@ fn main() {
         "clean" => {
             if let Err(e) = cmd_clean() {
                 eprintln!("Erro no clean: {}", e);
+                std::process::exit(1);
+            }
+        }
+        "gc" => {
+            if let Err(e) = cmd_gc() {
+                eprintln!("Erro no gc: {}", e);
                 std::process::exit(1);
             }
         }

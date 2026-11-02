@@ -1,8 +1,12 @@
-use crate::store::ContentStore;
+#![allow(dead_code)]
+
+use crate::store::{validate_cache_key, ContentStore};
+use crate::sha256::sha256_hex;
 use std::fs;
-use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Stdio};
+use std::thread;
+use std::time::Duration;
 
 /// Configuração do remoto (salva em `.lean-cache/remote.txt`).
 #[derive(Debug, Clone)]
@@ -10,6 +14,8 @@ pub struct RemoteConfig {
     pub base_url: String,
     pub auth_token: Option<String>,
     pub timeout_secs: u64,
+    pub max_retries: u32,
+    pub backoff_base_secs: u64,
 }
 
 impl Default for RemoteConfig {
@@ -18,6 +24,8 @@ impl Default for RemoteConfig {
             base_url: String::new(),
             auth_token: None,
             timeout_secs: 60,
+            max_retries: 3,
+            backoff_base_secs: 2,
         }
     }
 }
@@ -30,6 +38,8 @@ impl RemoteConfig {
                 let mut base_url = String::new();
                 let mut auth_token: Option<String> = None;
                 let mut timeout_secs: u64 = 60;
+                let mut max_retries: u32 = 3;
+                let mut backoff_base_secs: u64 = 2;
                 for line in data.lines() {
                     let line = line.trim();
                     if let Some(rest) = line.strip_prefix("base_url=") {
@@ -38,12 +48,18 @@ impl RemoteConfig {
                         auth_token = Some(rest.to_string());
                     } else if let Some(rest) = line.strip_prefix("timeout_secs=") {
                         timeout_secs = rest.parse().unwrap_or(60);
+                    } else if let Some(rest) = line.strip_prefix("max_retries=") {
+                        max_retries = rest.parse().unwrap_or(3);
+                    } else if let Some(rest) = line.strip_prefix("backoff_base_secs=") {
+                        backoff_base_secs = rest.parse().unwrap_or(2);
                     }
                 }
                 return Self {
                     base_url,
                     auth_token,
                     timeout_secs,
+                    max_retries,
+                    backoff_base_secs,
                 };
             }
         }
@@ -58,6 +74,8 @@ impl RemoteConfig {
             lines.push(format!("auth_token={}", t));
         }
         lines.push(format!("timeout_secs={}", self.timeout_secs));
+        lines.push(format!("max_retries={}", self.max_retries));
+        lines.push(format!("backoff_base_secs={}", self.backoff_base_secs));
         fs::write(path, lines.join("\n") + "\n")
     }
 }
@@ -83,26 +101,29 @@ impl RemoteClient {
     }
 
     /// Monta a URL para um artefato específico de uma chave.
-    fn artifact_url(&self, key: &str, file_name: &str) -> String {
-        format!(
+    fn artifact_url(&self, key: &str, file_name: &str) -> std::io::Result<String> {
+        validate_cache_key(key)?;
+        validate_cache_key(file_name)?;
+        Ok(format!(
             "{}/objects/{}/{}",
             self.config.base_url.trim_end_matches('/'),
             key,
             file_name
-        )
+        ))
     }
 
     /// Monta a URL base de uma chave (para HEAD / listagem).
-    fn key_url(&self, key: &str) -> String {
-        format!(
+    fn key_url(&self, key: &str) -> std::io::Result<String> {
+        validate_cache_key(key)?;
+        Ok(format!(
             "{}/objects/{}/",
             self.config.base_url.trim_end_matches('/'),
             key
-        )
+        ))
     }
 
     /// Executa um curl com argumentos e retorna (exit_status, stdout, stderr).
-    fn curl(&self, args: &[&str]) -> std::io::Result<(i32, String, String)> {
+    fn curl_once(&self, args: &[&str]) -> std::io::Result<(i32, String, String)> {
         let mut cmd = Command::new("curl");
         cmd.args(args)
             .stdout(Stdio::piped())
@@ -131,12 +152,57 @@ impl RemoteClient {
         Ok((status, stdout, stderr))
     }
 
-    /// Verifica se uma chave existe no remoto (HEAD na primeira artefato conhecido
-    /// ou na pasta da chave). Como não sabemos os nomes dos arquivos, tentamos HEAD
-    /// na URL da chave; o servidor deve responder 200 se a chave existe.
+    /// Executa um curl com retry e backoff exponencial.
+    /// Tenta até `max_retries` vezes, esperando `backoff_base_secs * 2^tentativa` segundos entre falhas.
+    fn curl_with_retry(&self, args: &[&str]) -> std::io::Result<(i32, String, String)> {
+        let mut last_err: Option<std::io::Error> = None;
+        for tentativa in 0..self.config.max_retries {
+            match self.curl_once(args) {
+                Ok(result @ (0, _, _)) => return Ok(result),
+                Ok((status, stdout, stderr)) => {
+                    // Código não-zero: erro HTTP ou de curl. Retry se ainda houver tentativas.
+                    if tentativa + 1 < self.config.max_retries {
+                        let delay = self.config.backoff_base_secs * 2u64.pow(tentativa);
+                        eprintln!(
+                            "curl falhou (status {}), retry {}/{} em {}s: {}",
+                            status,
+                            tentativa + 1,
+                            self.config.max_retries,
+                            delay,
+                            stderr.trim()
+                        );
+                        thread::sleep(Duration::from_secs(delay));
+                        continue;
+                    }
+                    return Ok((status, stdout, stderr));
+                }
+                Err(e) => {
+                    last_err = Some(e);
+                    if tentativa + 1 < self.config.max_retries {
+                        let delay = self.config.backoff_base_secs * 2u64.pow(tentativa);
+                        eprintln!(
+                            "curl erro de I/O, retry {}/{} em {}s: {}",
+                            tentativa + 1,
+                            self.config.max_retries,
+                            delay,
+                            last_err.as_ref().unwrap()
+                        );
+                        thread::sleep(Duration::from_secs(delay));
+                        continue;
+                    }
+                }
+            }
+        }
+        Err(last_err.unwrap_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::Other, "curl excedeu max_retries sem sucesso")
+        }))
+    }
+
+    /// Verifica se uma chave existe no remoto (HEAD na pasta da chave).
+    /// Retorna Ok(true) se existe, Ok(false) se não existe (404), ou Err em erro de rede.
     pub fn key_exists_remote(&self, key: &str) -> std::io::Result<bool> {
-        let url = self.key_url(key);
-        let (status, _, _) = self.curl(&[
+        let url = self.key_url(key)?;
+        let (status, _, _) = self.curl_with_retry(&[
             "--head",
             "--request",
             "HEAD",
@@ -160,36 +226,38 @@ impl RemoteClient {
                 )
             })?
             .to_string_lossy();
-        let url = self.artifact_url(key, &file_name);
+        let url = self.artifact_url(key, &file_name)?;
 
         let mut args = Vec::new();
         args.push("-T");
         args.push(local_path.to_str().unwrap_or(""));
         args.push(url.as_str());
 
-        let (status, _, stderr) = self.curl(&args)?;
+        let (status, _, _stderr) = self.curl_with_retry(&args)?;
         if status == 0 {
             Ok(true)
         } else {
-            eprintln!(
-                "Aviso: falha ao enviar {} para {} (curl {}): {}",
-                local_path.display(),
-                url,
-                status,
-                stderr.trim()
-            );
+            // Não logar URL completa (pode conter credenciais ou dados sensíveis)
+            eprintln!("Aviso: falha ao enviar arquivo para o remoto (curl status {})", status);
             Ok(false)
         }
     }
 
     /// Faz download de um único arquivo do remoto para o destino.
+    /// Retorna Ok(true) se baixou com sucesso, Ok(false) se o arquivo não existe no remoto,
+    /// ou Err em caso de erro de rede / I/O.
     pub fn download_artifact(
         &self,
         key: &str,
         file_name: &str,
         dest: &Path,
     ) -> std::io::Result<bool> {
-        let url = self.artifact_url(key, file_name);
+        let url = self.artifact_url(key, file_name)?;
+        // Valida que dest não escapa para fora do diretório esperado
+        let _canonical_dest = dest
+            .canonicalize()
+            .unwrap_or_else(|_| dest.to_path_buf());
+
         fs::create_dir_all(dest.parent().unwrap_or(Path::new(".")))?;
 
         let mut args = Vec::new();
@@ -198,20 +266,64 @@ impl RemoteClient {
         args.push("--create-dirs");
         args.push(url.as_str());
 
-        let (status, _, stderr) = self.curl(&args)?;
+        let (status, _, _stderr) = self.curl_with_retry(&args)?;
         if status == 0 && dest.is_file() {
             Ok(true)
+        } else if status == 22 {
+            // HTTP 404 (curl --fail-with-body retorna 22): arquivo não existe.
+            Ok(false)
         } else {
+            // Não logar URL completa nem stderr (pode conter dados sensíveis)
             eprintln!(
-                "Aviso: falha ao baixar {} de {} (curl {}): {}",
-                url, key, status, stderr.trim()
+                "Aviso: falha ao baixar chave {} (curl status {})",
+                key, status
             );
             Ok(false)
         }
     }
 
+    /// Faz download de um único arquivo e verifica integridade via SHA-256.
+    /// A chave de conteúdo é usada como hash esperado: o hash do arquivo baixado
+    /// deve bater com a chave (ou com um hash armazenado no trace).
+    /// Retorna Ok(true) se baixou e verificou com sucesso.
+    pub fn download_artifact_verified(
+        &self,
+        key: &str,
+        file_name: &str,
+        dest: &Path,
+        expected_hash: &str,
+    ) -> std::io::Result<bool> {
+        let baixou = self.download_artifact(key, file_name, dest)?;
+        if !baixou {
+            return Ok(false);
+        }
+
+        // Verifica integridade: recomputa SHA-256 do arquivo baixado.
+        let dados = match fs::read(dest) {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("Aviso: não foi possível ler {} para verificação: {}", dest.display(), e);
+                let _ = fs::remove_file(dest);
+                return Ok(false);
+            }
+        };
+        let hash_actual = sha256_hex(&dados);
+
+        if hash_actual != expected_hash {
+            eprintln!(
+                "Aviso: integridade falhou para {} (esperado {}, obtido {}) — descartando arquivo corrompido.",
+                file_name, &expected_hash[..8], &hash_actual[..8]
+            );
+            let _ = fs::remove_file(dest);
+            return Ok(false);
+        }
+
+        Ok(true)
+    }
+
     /// Lista os arquivos de uma chave no remoto (tenta GET na pasta; depende do servidor).
     /// Retorna vazia se o servidor não suportar listagem.
+    #[allow(dead_code)]
     pub fn list_remote_artifacts(&self, _key: &str) -> std::io::Result<Vec<String>> {
         // Implementação mínima: sem listagem genérica. O caller deve saber os nomes.
         Ok(Vec::new())

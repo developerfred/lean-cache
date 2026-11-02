@@ -164,10 +164,14 @@ caminho = <store>/objects/<chave[0:2]>/<chave>/
 | 2 | Cache remoto (HTTP via curl), deduplicação, compressão, retry, benchmark | ✅ Concluída |
 | 2.5 | Integração com Lean 4 real (`lean` direto, arquivo único) | ✅ Concluída |
 | 3 | Wrapper transparente ao `lake build` (multi-módulo) | ✅ Concluído |
-| 4 | Compressão de artefatos (zstd/lz4) + evicção de cache (LRU/LFU) | ⬜ Próxima |
+| 4 | Compressão de artefatos (zstd/lz4) + evicção de cache (LRU/LFU) | ✅ Concluído |
+| 4b | Workers remotos distribuídos (Bazel-style) | ✅ Concluído |
+| 4c | Cache remoto S3 com assinatura AWS v4 | ✅ Concluído |
+| 4d | Snapshots de elaboração `lean --server` | ✅ Concluído (módulo implementado) |
+| 4e | Edição cirúrgica por declaração | ✅ Concluído (módulo implementado) |
 | 5 | Pre-computação de dependências públicas (mathlib, stdlib) com distribuição de binários | ⬜ Planejada |
-| 6 | Estado de elaboração entre sessões `lean --server` (snapshots) | ⬜ Planejada |
-| 7 | Execução remota distribuída de elaboração (workers remotos / Bazel RE) | ⬜ Planejada |
+| 6 | Estado de elaboração entre sessões `lean --server` (integração com servidor) | ⬜ Planejada |
+| 7 | Execução remota distribuída de elaboração (integração com workers) | ⬜ Planejada |
 | 8 | Build Advisor / edição cirúrgica (direção WSP) | ⬜ Pesquisa futura |
 
 ## 9. Resultados do Benchmark (Lean 4.35.0 real via elan)
