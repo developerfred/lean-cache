@@ -1,0 +1,21 @@
+# Lean
+.olean
+.ilean
+.c
+.setup.json
+.lake
+build
+lake-manifest.json
+
+# lean-cache
+.lean-cache
+
+# Rust
+target/
+Cargo.lock
+
+# OS
+.DS_Store
+*.swp
+*.swo
+*~

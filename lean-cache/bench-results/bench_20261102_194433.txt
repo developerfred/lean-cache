@@ -1,0 +1,13 @@
+=== Benchmark do lean-cache (simulado, sem Lean) ===
+
+  build frio (100 módulos): 1.9452015s (1945 ms, 1945201 micros)
+    hits=0 misses=100 arquivos=400 store=262324 bytes
+  build quente (100 módulos): 238.090375ms (238 ms, 238090 micros)
+    hits=100 misses=0 arquivos=500 store=262324 bytes
+  Speedup (frio vs quente): 8.17x
+  hash puro (1000 arquivos): 1.0292625s (1029 ms, 1029262 micros)
+    hits=0 misses=0 arquivos=1000 store=0 bytes
+  hit parcial (100 módulos, 10 mudados): 2.170029084s (2170 ms, 2170029 micros)
+    hits=90 misses=110 arquivos=890 store=262324 bytes
+
+=== Fim do benchmark ===

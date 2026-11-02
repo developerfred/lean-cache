@@ -1,0 +1,14 @@
+[package]
+name = "lean-cache"
+version = "0.1.0"
+edition = "2021"
+description = "Content-addressable build cache accelerator for Lean 4"
+authors = ["builder-the-best"]
+license = "MIT"
+
+[[bin]]
+name = "lean-cache"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 3
