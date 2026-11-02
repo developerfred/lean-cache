@@ -49,6 +49,22 @@ impl DeclKind {
             other => DeclKind::Other(other.to_string()),
         }
     }
+
+    /// Retorna a representacao em string do tipo de declaracao.
+    pub fn kind_as_str(&self) -> &str {
+        match self {
+            DeclKind::Def => "def",
+            DeclKind::Theorem => "theorem",
+            DeclKind::Lemma => "lemma",
+            DeclKind::Structure => "structure",
+            DeclKind::Class => "class",
+            DeclKind::Instance => "instance",
+            DeclKind::Axiom => "axiom",
+            DeclKind::Constant => "constant",
+            DeclKind::Variable => "variable",
+            DeclKind::Other(s) => s,
+        }
+    }
 }
 
 /// Uma declaração Lean extraída de um arquivo fonte.

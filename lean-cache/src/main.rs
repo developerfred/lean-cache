@@ -20,6 +20,7 @@ mod bench;
 
 use store::{ContentStore, resolve_import_graph, module_key};
 use remote::{RemoteClient, RemoteConfig, push_key, sync_all};
+use surgical::{SurgicalStore, extract_declarations, surgical_decl_key};
 use bench::executar_suite;
 
 const ARTIFACT_EXTENSIONS: &[&str] = &["olean", "ilean", "c", "o"];
@@ -93,6 +94,9 @@ fn print_usage() {
           snap <chave>              Salva snapshot de elaboração de um módulo\n\
           snap-load <chave>         Restaura snapshot de elaboração de um módulo\n\
           snap-list                 Lista snapshots armazenados\n\
+          surgical-list <arquivo.lean>  Lista declaracoes cirurgicas de um arquivo\n\
+          surgical-store <arquivo.lean> Armazena declaracoes cirurgicas no cache\n\
+          surgical-get <arquivo.lean>   Restaura declaracoes cirurgicas do cache\n\
           bench                     Executa suite de benchmark (simulado)"
     );
 }
@@ -323,6 +327,118 @@ fn cmd_gc() -> io::Result<()> {
     Ok(())
 }
 
+/// Comando surgical-list: lista declaracoes cirurgicas de um arquivo Lean.
+fn cmd_surgical_list(source_path: &Path) -> io::Result<()> {
+    if !source_path.is_file() {
+        eprintln!("Erro: arquivo nao encontrado: {}", source_path.display());
+        std::process::exit(1);
+    }
+    let source = fs::read_to_string(source_path)?;
+    let declarations = extract_declarations(&source);
+
+    println!("Declaracoes cirurgicas em {}:", source_path.display());
+    for decl in &declarations {
+        let key_short = &decl.content_hash[..8];
+        println!(
+            "  {} {} (linha {}-{}, chave {})",
+            decl.kind.kind_as_str(),
+            decl.name,
+            decl.start_line,
+            decl.end_line,
+            key_short
+        );
+    }
+    println!("Total: {} declaracao(oes).", declarations.len());
+    Ok(())
+}
+
+/// Comando surgical-store: armazena declaracoes cirurgicas de um arquivo no cache.
+fn cmd_surgical_store(source_path: &Path) -> io::Result<()> {
+    if !source_path.is_file() {
+        eprintln!("Erro: arquivo nao encontrado: {}", source_path.display());
+        std::process::exit(1);
+    }
+    let source = fs::read_to_string(source_path)?;
+    let declarations = extract_declarations(&source);
+    let surgical_store = SurgicalStore::open(".lean-cache")?;
+    let lean_version = None; // Sem versao do Lean para uso standalone
+    let _flags: Vec<String> = Vec::new();
+
+    let mut stored = 0usize;
+    let mut skipped = 0usize;
+
+    // Precisamos das chaves dos modulos importados para calcular dep_keys.
+    // Para uso standalone, usamos apenas o hash do conteudo da declaracao.
+    for decl in &declarations {
+        let dep_keys: Vec<String> = decl
+            .depends_on
+            .iter()
+            .filter_map(|_| None) // Sem resolucao de modulos em modo standalone
+            .collect();
+        let decl_key = surgical_decl_key(&decl.content, &dep_keys, &lean_version);
+
+        if surgical_store.contains(&decl_key) {
+            skipped += 1;
+        } else {
+            surgical_store.store_decl(&decl_key, decl.content.as_bytes())?;
+            stored += 1;
+        }
+    }
+
+    println!(
+        "Surgical store: {} armazenado(s), {} ja existiam, {} total.",
+        stored, skipped, declarations.len()
+    );
+    Ok(())
+}
+
+/// Comando surgical-get: restaura declaracoes cirurgicas de um arquivo do cache.
+fn cmd_surgical_get(source_path: &Path, dest_dir: &Path) -> io::Result<()> {
+    if !source_path.is_file() {
+        eprintln!("Erro: arquivo nao encontrado: {}", source_path.display());
+        std::process::exit(1);
+    }
+    let source = fs::read_to_string(source_path)?;
+    let declarations = extract_declarations(&source);
+    let surgical_store = SurgicalStore::open(".lean-cache")?;
+    let lean_version = None;
+
+    fs::create_dir_all(dest_dir)?;
+
+    let mut restored = 0usize;
+    let mut missing = 0usize;
+
+    for decl in &declarations {
+        let dep_keys: Vec<String> = decl
+            .depends_on
+            .iter()
+            .filter_map(|_| None)
+            .collect();
+        let decl_key = surgical_decl_key(&decl.content, &dep_keys, &lean_version);
+
+        match surgical_store.restore_decl(&decl_key)? {
+            Some(content) => {
+                let dest = dest_dir.join(format!("{}.lean", decl.name));
+                fs::write(&dest, &content)?;
+                restored += 1;
+            }
+            None => {
+                missing += 1;
+                println!(
+                    "  Declaracao nao encontrada no cache: {} (chave {})",
+                    decl.name, &decl.content_hash[..8]
+                );
+            }
+        }
+    }
+
+    println!(
+        "Surgical get: {} restaurado(s), {} nao encontrado(s), {} total.",
+        restored, missing, declarations.len()
+    );
+    Ok(())
+}
+
 /// Comando build: wrapper acelerado ao `lake build`.
 ///
 /// Resolve o grafo de imports, calcula chave de conteúdo por módulo.
@@ -372,8 +488,9 @@ fn cmd_build(root: &Path) -> io::Result<()> {
     }
 
     let store = ContentStore::open(".lean-cache")?;
+    let surgical_store = SurgicalStore::open(".lean-cache")?;
     let lean_version = detect_lean_version(&lake)?;
-    let flags: Vec<String> = Vec::new();
+    let _flags: Vec<String> = Vec::new();
 
     let mut hits = 0usize;
     let mut misses = 0usize;
@@ -383,6 +500,10 @@ fn cmd_build(root: &Path) -> io::Result<()> {
     // (dependencias antes do dependente), entao ja podemos resolver chaves
     // dos imports transitivos enquanto iteramos.
     let mut module_keys: HashMap<String, String> = HashMap::new();
+
+    // Contadores de edicao cirurgica (por declaracao).
+    let mut decl_hits = 0usize;
+    let mut decl_misses = 0usize;
 
     println!("Grafo de resolucao: {} modulo(s)", graph.len());
 
@@ -403,8 +524,36 @@ fn cmd_build(root: &Path) -> io::Result<()> {
             .collect();
 
         // A chave inclui conteudo direto + chaves dos imports + versao do Lean + flags.
-        let key = module_key(&source_bytes, &import_keys, &lean_version, &flags);
+        let key = module_key(&source_bytes, &import_keys, &lean_version, &[]);
         module_keys.insert(module_name.to_string(), key.clone());
+
+        // --- Edicao cirurgica: extrair declaracoes individuais do modulo ---
+        let source_text = match fs::read_to_string(source_path) {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("Erro ao ler {} para analise cirurgica: {}", source_path.display(), e);
+                std::process::exit(1);
+            }
+        };
+        let declarations = extract_declarations(&source_text);
+
+        for decl in &declarations {
+            // Chaves das declaracoes de que esta declaracao depende (ja calculadas pela ordem topologica).
+            let dep_keys: Vec<String> = decl
+                .depends_on
+                .iter()
+                .filter_map(|dep_name| module_keys.get(dep_name).cloned())
+                .collect();
+            let decl_key = surgical_decl_key(&decl.content, &dep_keys, &lean_version);
+
+            if surgical_store.contains(&decl_key) {
+                decl_hits += 1;
+            } else {
+                decl_misses += 1;
+                // Uma declaracao em miss significa que nao podemos pular o build inteiro.
+                all_hit = false;
+            }
+        }
 
         if store.contains(&key) {
             hits += 1;
@@ -434,6 +583,10 @@ fn cmd_build(root: &Path) -> io::Result<()> {
             }
         }
         println!("\nResultado: {} hit(s), 0 miss(es) - build pulado via cache.", hits);
+        println!(
+            "  Cirurgico: {} declaracao(oes) hit, {} miss de {} total.",
+            decl_hits, decl_misses, decl_hits + decl_misses
+        );
         return Ok(());
     }
 
@@ -505,6 +658,10 @@ fn cmd_build(root: &Path) -> io::Result<()> {
             "\nResultado: {} hit(s) (local + remoto), build pulado via cache.",
             hits
         );
+        println!(
+            "  Cirurgico: {} declaracao(oes) hit, {} miss de {} total.",
+            decl_hits, decl_misses, decl_hits + decl_misses
+        );
         return Ok(());
     }
 
@@ -541,7 +698,7 @@ fn cmd_build(root: &Path) -> io::Result<()> {
         collect_lake_artifacts(&lake_build_dir, &mut lake_artifacts)?;
 
         // Para cada modulo em MISS, encontra seus artefatos e armazena no cache.
-        for (status, _source_path, module_name, key) in &module_decisions {
+        for (status, source_path, module_name, key) in &module_decisions {
             if *status != "MISS" {
                 continue;
             }
@@ -574,12 +731,33 @@ fn cmd_build(root: &Path) -> io::Result<()> {
                     &key[..8]
                 );
             }
+
+            // Armazena declaracoes cirurgicas do modulo recompilado.
+            if let Ok(source_text) = fs::read_to_string(source_path) {
+                let declarations = extract_declarations(&source_text);
+                for decl in &declarations {
+                    let dep_keys: Vec<String> = decl
+                        .depends_on
+                        .iter()
+                        .filter_map(|dep_name| module_keys.get(dep_name).cloned())
+                        .collect();
+                    let decl_key = surgical_decl_key(&decl.content, &dep_keys, &lean_version);
+
+                    if !surgical_store.contains(&decl_key) {
+                        let _ = surgical_store.store_decl(&decl_key, decl.content.as_bytes());
+                    }
+                }
+            }
         }
     }
 
     println!(
         "\nResultado: {} hit(s), {} miss(es) de {} modulo(s).",
         hits, misses, graph.len()
+    );
+    println!(
+        "  Cirurgico: {} declaracao(oes) hit, {} miss de {} total.",
+        decl_hits, decl_misses, decl_hits + decl_misses
     );
     Ok(())
 }
@@ -863,6 +1041,36 @@ fn main() {
         "bench" => {
             if let Err(e) = executar_suite() {
                 eprintln!("Erro no bench: {}", e);
+                std::process::exit(1);
+            }
+        }
+        "surgical-list" => {
+            if args.len() < 3 {
+                eprintln!("Uso: lean-cache surgical-list <arquivo.lean>");
+                std::process::exit(1);
+            }
+            if let Err(e) = cmd_surgical_list(Path::new(&args[2])) {
+                eprintln!("Erro no surgical-list: {}", e);
+                std::process::exit(1);
+            }
+        }
+        "surgical-store" => {
+            if args.len() < 3 {
+                eprintln!("Uso: lean-cache surgical-store <arquivo.lean>");
+                std::process::exit(1);
+            }
+            if let Err(e) = cmd_surgical_store(Path::new(&args[2])) {
+                eprintln!("Erro no surgical-store: {}", e);
+                std::process::exit(1);
+            }
+        }
+        "surgical-get" => {
+            if args.len() < 4 {
+                eprintln!("Uso: lean-cache surgical-get <arquivo.lean> <diretorio-destino>");
+                std::process::exit(1);
+            }
+            if let Err(e) = cmd_surgical_get(Path::new(&args[2]), Path::new(&args[3])) {
+                eprintln!("Erro no surgical-get: {}", e);
                 std::process::exit(1);
             }
         }
