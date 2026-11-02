@@ -19,3 +19,6 @@ Cargo.lock
 *.swp
 *.swo
 *~
+
+PESQUISA_LEAN_BUILD.md
+NOTAS_DESAFIOS_IMPEDIMENTOS.md
