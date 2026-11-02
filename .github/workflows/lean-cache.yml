@@ -15,21 +15,18 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Instalar Lean 4 via elan
-        uses: leanprover/elan-action@v1
-        with:
-          version: stable
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y
+          echo "$HOME/.elan/bin" >> $GITHUB_PATH
 
       - name: Instalar Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
 
       - name: Compilar lean-cache (offline, std-only)
         run: |
-          if [ -d lean-cache ]; then
-            cd lean-cache
-          else
-            git clone https://github.com/seu-usuario/lean-cache.git lean-cache
-            cd lean-cache
-          fi
+          cd lean-cache
           cargo build --release
           cp target/release/lean-cache /usr/local/bin/
 
@@ -88,21 +85,18 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Instalar Lean 4 via elan
-        uses: leanprover/elan-action@v1
-        with:
-          version: stable
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y
+          echo "$HOME/.elan/bin" >> $GITHUB_PATH
 
       - name: Instalar Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
 
       - name: Compilar lean-cache
         run: |
-          if [ -d lean-cache ]; then
-            cd lean-cache
-          else
-            git clone https://github.com/seu-usuario/lean-cache.git lean-cache
-            cd lean-cache
-          fi
+          cd lean-cache
           cargo build --release
           cp target/release/lean-cache /usr/local/bin/
 
