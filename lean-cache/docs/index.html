@@ -1,1 +1,261 @@
-<!DOCTYPE html><html><head><title>lean-cache</title></head><body><h1>lean-cache</h1></body></html>
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>lean-cache — Acelere builds do Lean 4</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      line-height: 1.6;
+      color: #1a1a1a;
+      background: #ffffff;
+    }
+    header {
+      background: #0f172a;
+      color: #fff;
+      padding: 4rem 1rem 2rem;
+      text-align: center;
+    }
+    header h1 {
+      font-size: 2.5rem;
+      margin-bottom: 1rem;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+    }
+    header p {
+      font-size: 1.25rem;
+      color: #cbd5e1;
+      max-width: 600px;
+      margin: 0 auto;
+    }
+    nav {
+      position: sticky;
+      top: 0;
+      background: rgba(15, 23, 42, 0.95);
+      backdrop-filter: blur(10px);
+      padding: 0.75rem 1rem;
+      z-index: 100;
+      border-bottom: 1px solid rgba(255,255,255,0.1);
+    }
+    nav ul {
+      display: flex;
+      gap: 2rem;
+      justify-content: center;
+      list-style: none;
+    }
+    nav a {
+      color: #94a3b8;
+      text-decoration: none;
+      font-size: 0.9rem;
+      font-weight: 500;
+      transition: color 0.2s;
+    }
+    nav a:hover { color: #fff; }
+    .container { max-width: 900px; margin: 0 auto; padding: 3rem 1rem; }
+    .hero-stats {
+      display: flex;
+      gap: 2rem;
+      justify-content: center;
+      margin: 3rem 0;
+      flex-wrap: wrap;
+    }
+    .stat {
+      text-align: center;
+      padding: 1.5rem;
+      background: #f8fafc;
+      border-radius: 12px;
+      border: 1px solid #e2e8f0;
+      min-width: 120px;
+    }
+    .stat-value {
+      font-size: 2rem;
+      font-weight: 800;
+      color: #0f172a;
+    }
+    .stat-label {
+      font-size: 0.85rem;
+      color: #64748b;
+      margin-top: 0.25rem;
+    }
+    .features {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1.5rem;
+      margin: 4rem 0;
+    }
+    .feature-card {
+      padding: 1.5rem;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      background: #fff;
+    }
+    .feature-card h3 {
+      font-size: 1.1rem;
+      margin-bottom: 0.5rem;
+      color: #0f172a;
+    }
+    .feature-card p {
+      font-size: 0.9rem;
+      color: #64748b;
+    }
+    .command {
+      background: #0f172a;
+      color: #e2e8f0;
+      padding: 1.5rem;
+      border-radius: 12px;
+      font-family: 'SF Mono', Monaco, monospace;
+      font-size: 0.9rem;
+      overflow-x: auto;
+      margin: 2rem 0;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 2rem 0;
+      font-size: 0.9rem;
+    }
+    th, td {
+      padding: 0.75rem;
+      text-align: left;
+      border-bottom: 1px solid #e2e8f0;
+    }
+    th { background: #f8fafc; font-weight: 600; color: #475569; }
+    .badge {
+      display: inline-block;
+      padding: 0.15rem 0.5rem;
+      border-radius: 6px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+    .badge-green { background: #dcfce7; color: #166534; }
+    .badge-yellow { background: #fef9c3; color: #854d0e; }
+    footer {
+      background: #0f172a;
+      color: #94a3b8;
+      padding: 3rem 1rem;
+      text-align: center;
+      border-top: 1px solid rgba(255,255,255,0.1);
+    }
+    footer p { margin: 0.5rem 0; font-size: 0.9rem; }
+    .btn {
+      display: inline-block;
+      background: #2563eb;
+      color: #fff;
+      padding: 0.75rem 1.5rem;
+      border-radius: 8px;
+      text-decoration: none;
+      font-weight: 600;
+      margin-top: 1rem;
+      transition: background 0.2s;
+    }
+    .btn:hover { background: #1d4ed8; }
+  </style>
+</head>
+<body>
+<nav>
+  <ul>
+    <li><a href="#sobre">Sobre</a></li>
+    <li><a href="#recursos">Recursos</a></li>
+    <li><a href="#benchmarks">Benchmarks</a></li>
+    <li><a href="#uso">Uso</a></li>
+    <li><a href="https://github.com/developerfred/lean-cache" target="_blank">GitHub</a></li>
+  </ul>
+</nav>
+
+<header>
+  <h1>lean-cache</h1>
+  <p>Cache endereçável por conteúdo para acelerar builds do Lean 4 em até 40×</p>
+  <a href="#uso" class="btn">Começar a usar</a>
+</header>
+
+<div class="hero-stats">
+  <div class="stat">
+    <div class="stat-value">40×</div>
+    <div class="stat-label">Speedup máximo</div>
+  </div>
+  <div class="stat">
+    <div class="stat-value">0 deps</div>
+    <div class="stat-label">Externas (std-only)</div>
+  </div>
+  <div class="stat">
+    <div class="stat-value">SHA-256</div>
+    <div class="stat-label">Puro em Rust</div>
+  </div>
+  <div class="stat">
+    <div class="stat-value">S3 v4</div>
+    <div class="stat-label">Cache remoto</div>
+  </div>
+</div>
+
+<div class="container">
+  <section id="sobre">
+    <h2>Sobre</h2>
+    <p>O <strong>lean-cache</strong> é um wrapper CLI para o sistema de build <em>lake</em> do Lean 4. Ele implementa um cache endereçável por conteúdo (CAS) que:</p>
+    <ul style="margin: 1rem 0 1rem 2rem;">
+      <li>Resolve o grafo de <code>import</code>s em ordem topológica</li>
+      <li>Calcula chave de conteúdo: <code>fonte + imports + versão do Lean + flags</code></li>
+      <li>Pula o <code>lake build</code> quando todos os módulos estão em cache hit</li>
+      <li>Restaura artefatos (.olean, .ilean, .c, .o) diretamente no <code>.lake/build/lib/lean/</code></li>
+    </ul>
+  </section>
+
+  <section id="recursos">
+    <h2>Recursos</h2>
+    <div class="features">
+      <div class="feature-card">
+        <h3>Compressão zstd/lz4</h3>
+        <p>Arquivos ≥64 KB são comprimidos automaticamente para economizar disco e banda de rede.</p>
+      </div>
+      <div class="feature-card">
+        <h3>Evicção LRU</h3>
+        <p>Comando <code>cache gc</code> remove entradas menos acessadas quando excede a quota de disco.</p>
+      </div>
+      <div class="feature-card">
+        <h3>Cache remoto S3 v4</h3>
+        <p>Assinatura AWS v4 para buckets privados, com validação de integridade SHA-256.</p>
+      </div>
+      <div class="feature-card">
+        <h3>Workers remotos</h3>
+        <p>Load balancing round-robin para execução distribuída de builds.</p>
+      </div>
+      <div class="feature-card">
+        <h3>Snapshots lean --server</h3>
+        <p>Salva e restaura estado de elaboração entre sessões do servidor Lean.</p>
+      </div>
+      <div class="feature-card">
+        <h3>Edição cirúrgica</h3>
+        <p>Cache por declaração individual (def, theorem, lemma) para edições locais rápidas.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="benchmarks">
+    <h2>Benchmarks</h2>
+    <table>
+      <thead>
+        <tr><th>Projeto</th><th>Módulos</th><th>Frio</th><th>Quente</th><th>Speedup</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>lean-test-proj</td><td>6</td><td>~11.5s</td><td>~0.29s</td><td><span class="badge badge-green">~40×</span></td></tr>
+        <tr><td>droidsaw-lean</td><td>8</td><td>~164s</td><td>~6.9s</td><td><span class="badge badge-green">~24×</span></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="uso">
+    <h2>Uso</h2>
+    <div class="command">
+$ lean-cache init\n$ lean-cache build MeuArquivo.lean
+    </div>
+    <p>Instale em <a href="https://github.com/developerfred/lean-cache" target="_blank">github.com/developerfred/lean-cache</a></p>
+  </section>
+</div>
+
+<footer>
+  <p><strong>lean-cache</strong> — Acelerando builds do Lean 4</p>
+  <p>Desenvolvido por builder-the-best · MIT License</p>
+</footer>
+</body>
+</html>
