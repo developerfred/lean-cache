@@ -133,4 +133,4 @@ MIT License. Veja o arquivo [LICENSE](LICENSE) para mais detalhes.
 
 ---
 
-**Desenvolvido por builder-the-best** — Acelerando builds do Lean 4, um módulo de cada vez.
+**Desenvolvido por codingsh** (codingsh@pm.me · x.com/codingsh) — Acelerando builds do Lean 4, um módulo de cada vez.

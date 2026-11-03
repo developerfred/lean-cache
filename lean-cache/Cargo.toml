@@ -3,7 +3,7 @@ name = "lean-cache"
 version = "0.1.0"
 edition = "2021"
 description = "Content-addressable build cache accelerator for Lean 4"
-authors = ["builder-the-best"]
+authors = ["codingsh <codingsh@pm.me>"]
 license = "MIT"
 
 [[bin]]

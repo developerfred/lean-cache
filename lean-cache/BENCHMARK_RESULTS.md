@@ -14,7 +14,7 @@ Speedup = Tempo frio / Tempo quente
 
 | # | Projeto | URL | Módulos | Build Frio | Build Quente | Speedup | Data |
 |---|---------|-----|---------|-------------|--------------|---------|------|
-| 1 | lean-test-proj (local) | `/Volumes/MASS/builder-the-best/lean-test-proj` | 6 | ~11.5s | ~0.29s | ~40x | 02/Nov/2026 |
+| 1 | lean-test-proj (local) | `lean-test-proj/` | 6 | ~11.5s | ~0.29s | ~40x | 02/Nov/2026 |
 | 2 | chronos-vault-security | https://github.com/Chronos-Vault/chronos-vault-security | — | — | — | — | Pendente |
 | 3 | droidsaw-lean | https://github.com/droidsaw/droidsaw-lean | — | — | — | — | Pendente |
 | 4 | L4YAML | https://github.com/nasa-jpl/L4YAML | — | — | — | — | Pendente |
