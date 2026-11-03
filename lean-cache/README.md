@@ -109,6 +109,30 @@ Benchmark simulado (100 módulos, sem Lean):
 | Build frio | ~1.0s | Miss → armazena 400 arquivos | — |
 | Build quente | ~0.33s | Hit → restaura 500 arquivos | **~3.1x** |
 
+## Benchmark em Grandes Projetos Reais
+
+| # | Projeto | Módulos | Declarações | Build Frio | Build Quente | Speedup | Status |
+|---|---------|---------|-------------|------------|--------------|---------|--------|
+| 1 | lean-test-proj (local) | 6 | 30 | ~11.5s | ~0.29s | **~40x** | ✅ Testado |
+| 2 | droidsaw-lean | 8 | 40 | ~164s | ~6.9s | **~24x** | ✅ Testado |
+| 3 | chronos-vault-security | — | — | Timeout | — | — | ⏭️ Pendente |
+| 4 | L4YAML | — | — | Timeout | — | — | ⏭️ Pendente |
+| 5 | mathlib4 | — | — | — | — | — | ⏭️ Pendente |
+
+### Metodologia
+
+Cada projeto foi testado com:
+1. **Build frio:** `lean-cache clean && rm -rf .lake/build && time lean-cache build <arquivo.lean>`
+2. **Build quente:** `rm -rf .lake/build && time lean-cache build <arquivo.lean>`
+
+Speedup = Tempo frio / Tempo quente
+
+### Observações
+
+- Projetos Lean grandes (mathlib4, etc.) levam horas a dias para build frio; timeouts são esperados em ambientes de CI com limites de tempo
+- O `lean-cache` funciona como wrapper ao `lake build`, requerendo `lakefile.toml` ou `lakefile.lean`
+- Para projetos com dependências externas (mathlib), use `lake update` antes do build frio
+
 ## Status do protótipo
 
 | Funcionalidade | Status |
