@@ -1,0 +1,46 @@
+# lean-cache
+
+Lean-cache é um cache endereçável por conteúdo (CAS) para acelerar builds do Lean 4 em até 40x.
+
+## Links importantes
+
+- https://developerfred.github.io/lean-cache/ — Página principal
+- https://developerfred.github.io/lean-cache/docs/index.html — Landing page
+- https://github.com/developerfred/lean-cache — Repositório GitHub
+- https://github.com/developerfred/lean-cache/releases — Releases
+
+## Descrição
+
+Wrapper CLI escrito em Rust (std-only) que funciona como cache de artefatos para o sistema de build lake do Lean 4. Resolve o grafo de imports, calcula chaves de conteúdo por módulo e pula a invocação do lake build quando todos os módulos estão em cache hit.
+
+## Principais recursos
+
+- Cache endereçável por conteúdo (SHA-256 puro em Rust)
+- Wrapper ao lake build (multi-módulo)
+- Compressão condicional (zstd/lz4/gzip, acima de 64 KB)
+- Evicção LRU (comando cache gc)
+- Workers remotos distribuídos (round-robin)
+- Cache remoto S3 com assinatura AWS v4
+- Snapshots de elaboração lean --server
+- Edição cirúrgica por declaração
+- Retry com backoff exponencial
+- Verificação de integridade SHA-256
+- Fallback local se remoto falhar
+
+## Comandos
+
+- lean-cache init — Inicializa o store
+- lean-cache build <arquivo> — Build acelerado
+- lean-cache status — Estatísticas
+- lean-cache gc — Garbage collection
+- lean-cache remote-set <url> — Configura remoto HTTP
+- lean-cache push <chave> — Envia artefatos
+- lean-cache pull <chave> — Baixa artefatos
+- lean-cache surgical-list <arquivo> — Lista declarações
+- lean-cache bench — Benchmark simulado
+
+## Contato
+
+- Email: codingsh@pm.me
+- X/Twitter: https://x.com/codingsh
+- GitHub: https://github.com/developerfred/lean-cache

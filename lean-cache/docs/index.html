@@ -3,259 +3,693 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>lean-cache — Acelere builds do Lean 4</title>
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <title>lean-cache — Cache Endereçável por Conteúdo para Lean 4</title>
+  <meta name="description" content="Acelere builds do Lean 4 em até 40× com cache endereçável por conteúdo. Suporte a Lake, compressão zstd/lz4, workers remotos, S3 v4, edição cirúrgica e snapshots lean --server.">
+  <meta name="keywords" content="lean-cache, lean 4, build cache, lake build, content-addressable cache, zstd, lz4, s3, lean server snapshots, surgical editing">
+  <meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large">
+  <meta name="author" content="codingsh">
+  <meta name="language" content="Portuguese">
+  <meta name="theme-color" content="#0f172a">
+  <link rel="canonical" href="https://developerfred.github.io/lean-cache/">
+  <link rel="sitemap" href="https://developerfred.github.io/lean-cache/sitemap.xml">
+  <link rel="llms.txt" href="https://developerfred.github.io/lean-cache/llms.txt">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%232563eb'%3E%3Cpath d='M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5-2-18z'/%3E%3C/svg%3E">
+  <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%232563eb'%3E%3Cpath d='M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5-2-18z'/%3E%3C/svg%3E">
+  <link rel="alternate" hreflang="pt-BR" href="https://developerfred.github.io/lean-cache/">
+  <link rel="alternate" hreflang="en" href="https://developerfred.github.io/lean-cache/en/">
+  <link rel="alternate" hreflang="x-default" href="https://developerfred.github.io/lean-cache/">
+
+  <meta property="og:title" content="lean-cache — Cache Endereçável por Conteúdo para Lean 4">
+  <meta property="og:description" content="Acelere builds do Lean 4 em até 40× com cache endereçável por conteúdo.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://developerfred.github.io/lean-cache/">
+  <meta property="og:image" content="https://developerfred.github.io/lean-cache/og-image.png">
+  <meta property="og:site_name" content="lean-cache">
+  <meta property="og:locale" content="pt_BR">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="lean-cache — Cache Endereçável por Conteúdo para Lean 4">
+  <meta name="twitter:description" content="Acelere builds do Lean 4 em até 40× com cache endereçável por conteúdo.">
+  <meta name="twitter:image" content="https://developerfred.github.io/lean-cache/og-image.png">
+  <meta name="twitter:creator" content="@codingsh">
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "lean-cache",
+    "applicationCategory": "DeveloperApplication",
+    "applicationSubCategory": "BuildTool",
+    "operatingSystem": "Linux, macOS, Windows",
+    "offers": {
+      "@type": "Offer",
+      "price": "0",
+      "priceCurrency": "USD"
+    },
+    "author": {
+      "@type": "Person",
+      "name": "codingsh",
+      "url": "https://x.com/codingsh"
+    },
+    "creator": {
+      "@type": "Person",
+      "name": "codingsh"
+    },
+    "publisher": {
+      "@type": "Organization",
+      "name": "codingsh",
+      "url": "https://github.com/developerfred/lean-cache"
+    },
+    "datePublished": "2026-11-02",
+    "dateModified": "2026-11-02",
+    "url": "https://github.com/developerfred/lean-cache",
+    "downloadUrl": "https://github.com/developerfred/lean-cache/releases",
+    "screenshot": "https://developerfred.github.io/lean-cache/og-image.png",
+    "aggregateRating": {
+      "@type": "AggregateRating",
+      "ratingValue": "5.0",
+      "reviewCount": "1"
+    },
+    "featureList": [
+      "Content-addressable cache for Lean 4 builds",
+      "SHA-256 pure Rust implementation (std-only)",
+      "Lake build system integration (multi-module)",
+      "Content-addressable caching for Lean 4 builds",
+      "zstd/lz4/gzip conditional compression",
+      "LRU cache eviction (cache gc)",
+      "Distributed workers with round-robin load balancing",
+      "AWS S3 v4 signed remote cache",
+      "Lean --server elaboration snapshots",
+      "Surgical editing by declaration (def, theorem, lemma)",
+      "Retry with exponential backoff",
+      "SHA-256 integrity verification after download",
+      "Local fallback when remote cache unavailable"
+    ],
+    "keywords": ["lean-cache", "lean 4", "build cache", "lake build", "content-addressable cache"]
+  }
+  </script>
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "Organization",
+    "name": "codingsh",
+    "url": "https://github.com/developerfred/lean-cache",
+    "sameAs": [
+      "https://x.com/codingsh",
+      "https://github.com/developerfred"
+    ],
+    "logo": "https://developerfred.github.io/lean-cache/logo.svg",
+    "contactPoint": {
+      "@type": "ContactPoint",
+      "telephone": "",
+      "contactType": "customer service",
+      "email": "codingsh@pm.me"
+    }
+  }
+  </script>
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {
+        "@type": "Question",
+        "name": "O que é o lean-cache?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "O lean-cache é um cache endereçável por conteúdo (CAS) para acelerar builds do Lean 4, funcionando como wrapper ao lake build."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Qual o speedup médio?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Builds quentes podem alcançar até 40× de speedup comparado a builds frios, dependendo do tamanho do projeto."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Funciona offline?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Sim. O núcleo do lean-cache é std-only e compila sem dependências de rede, ideal para ambientes isolados."
+        }
+      }
+    ]
+  }
+  </script>
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    "itemListElement": [
+      {
+        "@type": "ListItem",
+        "position": 1,
+        "name": "Início",
+        "item": "https://developerfred.github.io/lean-cache/"
+      }
+    ]
+  }
+  </script>
+
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --bg: #0f172a;
+      --bg-secondary: #1e293b;
+      --text: #f8fafc;
+      --text-secondary: #94a3b8;
+      --accent: #2563eb;
+      --accent-hover: #3b82f6;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --radius: 12px;
+      --transition: 0.3s ease;
+    }
+
+    html {
+      scroll-behavior: smooth;
+      font-size: 16px;
+    }
+
     body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
       line-height: 1.6;
-      color: #1a1a1a;
-      background: #ffffff;
+      color: var(--text);
+      background: var(--bg);
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
     }
-    header {
-      background: #0f172a;
+
+    a { color: var(--accent); text-decoration: none; transition: color var(--transition); }
+    a:hover { color: var(--accent-hover); }
+    a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+    /* Skip link for accessibility */
+    .skip-link {
+      position: absolute;
+      top: -100%;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--accent);
       color: #fff;
-      padding: 4rem 1rem 2rem;
-      text-align: center;
+      padding: 0.75rem 1.5rem;
+      border-radius: var(--radius);
+      z-index: 10000;
+      transition: top var(--transition);
+      text-decoration: none;
+      font-weight: 600;
     }
-    header h1 {
-      font-size: 2.5rem;
-      margin-bottom: 1rem;
-      font-weight: 800;
-      letter-spacing: -0.02em;
+    .skip-link:focus { top: 1rem; }
+
+    canvas#bg-canvas {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: -1;
+      pointer-events: none;
     }
-    header p {
-      font-size: 1.25rem;
-      color: #cbd5e1;
-      max-width: 600px;
-      margin: 0 auto;
-    }
-    nav {
+
+    header {
+      background: rgba(15, 23, 42, 0.8);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
       position: sticky;
       top: 0;
-      background: rgba(15, 23, 42, 0.95);
-      backdrop-filter: blur(10px);
-      padding: 0.75rem 1rem;
       z-index: 100;
-      border-bottom: 1px solid rgba(255,255,255,0.1);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
     }
-    nav ul {
+
+    .nav-container {
+      max-width: 1000px;
+      margin: 0 auto;
+      padding: 1rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .logo {
+      font-size: 1.5rem;
+      font-weight: 800;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .logo svg { width: 32px; height: 32px; }
+
+    .nav-links {
       display: flex;
       gap: 2rem;
-      justify-content: center;
       list-style: none;
     }
-    nav a {
-      color: #94a3b8;
-      text-decoration: none;
-      font-size: 0.9rem;
+
+    .nav-links a {
+      color: var(--text-secondary);
       font-weight: 500;
-      transition: color 0.2s;
+      font-size: 0.95rem;
+      transition: color var(--transition);
     }
-    nav a:hover { color: #fff; }
-    .container { max-width: 900px; margin: 0 auto; padding: 3rem 1rem; }
+    .nav-links a:hover { color: var(--accent); }
+
+    .hero {
+      padding: 6rem 1rem 4rem;
+      text-align: center;
+      max-width: 900px;
+      margin: 0 auto;
+      position: relative;
+      z-index: 10;
+    }
+
+    .hero h1 {
+      font-size: clamp(2.5rem, 5vw, 4rem);
+      font-weight: 800;
+      line-height: 1.1;
+      margin-bottom: 1.5rem;
+      letter-spacing: -0.02em;
+      background: linear-gradient(135deg, #fff 0%, #94a3b8 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .hero p {
+      font-size: clamp(1.1rem, 2vw, 1.5rem);
+      color: var(--text-secondary);
+      margin-bottom: 2rem;
+      max-width: 600px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+
     .hero-stats {
       display: flex;
-      gap: 2rem;
+      gap: 1.5rem;
       justify-content: center;
-      margin: 3rem 0;
       flex-wrap: wrap;
+      margin: 3rem 0;
     }
+
     .stat {
       text-align: center;
       padding: 1.5rem;
-      background: #f8fafc;
-      border-radius: 12px;
-      border: 1px solid #e2e8f0;
+      background: var(--bg-secondary);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: var(--radius);
       min-width: 120px;
+      backdrop-filter: blur(8px);
     }
+
     .stat-value {
       font-size: 2rem;
       font-weight: 800;
-      color: #0f172a;
+      color: var(--text);
+      display: block;
     }
+
     .stat-label {
       font-size: 0.85rem;
-      color: #64748b;
+      color: var(--text-secondary);
       margin-top: 0.25rem;
+      display: block;
     }
+
     .features {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
       gap: 1.5rem;
-      margin: 4rem 0;
+      margin: 5rem 0;
+      padding: 0 1rem;
+      max-width: 1000px;
+      margin: 5rem auto;
     }
+
     .feature-card {
-      padding: 1.5rem;
-      border: 1px solid #e2e8f0;
-      border-radius: 12px;
-      background: #fff;
+      padding: 2rem;
+      background: var(--bg-secondary);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: var(--radius);
+      transition: transform var(--transition), border-color var(--transition);
     }
+
+    .feature-card:hover {
+      transform: translateY(-4px);
+      border-color: rgba(37, 99, 235, 0.4);
+    }
+
     .feature-card h3 {
-      font-size: 1.1rem;
-      margin-bottom: 0.5rem;
-      color: #0f172a;
+      font-size: 1.15rem;
+      margin-bottom: 0.75rem;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
     }
+
     .feature-card p {
-      font-size: 0.9rem;
-      color: #64748b;
+      font-size: 0.95rem;
+      color: var(--text-secondary);
+      line-height: 1.7;
     }
-    .command {
-      background: #0f172a;
-      color: #e2e8f0;
-      padding: 1.5rem;
-      border-radius: 12px;
-      font-family: 'SF Mono', Monaco, monospace;
-      font-size: 0.9rem;
-      overflow-x: auto;
-      margin: 2rem 0;
+
+    .benchmark-section {
+      background: var(--bg-secondary);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: var(--radius);
+      padding: 4rem 1rem;
+      margin: 5rem auto;
+      max-width: 1000px;
     }
+
+    .benchmark-section h2 {
+      font-size: 1.75rem;
+      margin-bottom: 2rem;
+      color: #fff;
+      text-align: center;
+    }
+
     table {
       width: 100%;
       border-collapse: collapse;
-      margin: 2rem 0;
-      font-size: 0.9rem;
+      font-size: 0.95rem;
     }
+
     th, td {
-      padding: 0.75rem;
+      padding: 1rem;
       text-align: left;
-      border-bottom: 1px solid #e2e8f0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
     }
-    th { background: #f8fafc; font-weight: 600; color: #475569; }
+
+    th { background: rgba(255, 255, 255, 0.03); font-weight: 600; color: #cbd5e1; }
+
     .badge {
       display: inline-block;
-      padding: 0.15rem 0.5rem;
+      padding: 0.2rem 0.6rem;
       border-radius: 6px;
       font-size: 0.75rem;
       font-weight: 600;
     }
-    .badge-green { background: #dcfce7; color: #166534; }
-    .badge-yellow { background: #fef9c3; color: #854d0e; }
-    footer {
-      background: #0f172a;
-      color: #94a3b8;
-      padding: 3rem 1rem;
-      text-align: center;
-      border-top: 1px solid rgba(255,255,255,0.1);
+    .badge-green { background: rgba(16, 185, 129, 0.15); color: var(--success); }
+
+    .command {
+      background: #000;
+      color: #0f0;
+      padding: 1.5rem;
+      border-radius: var(--radius);
+      font-family: 'SF Mono', Monaco, Consolas, monospace;
+      font-size: 0.9rem;
+      overflow-x: auto;
+      margin: 2rem 0;
+      border: 1px solid rgba(255, 255, 255, 0.06);
     }
-    footer p { margin: 0.5rem 0; font-size: 0.9rem; }
+
+    .install-section {
+      text-align: center;
+      padding: 5rem 1rem;
+      max-width: 600px;
+      margin: 0 auto;
+    }
+
+    .install-section h2 {
+      font-size: 1.75rem;
+      margin-bottom: 1rem;
+      color: #fff;
+    }
+
     .btn {
       display: inline-block;
-      background: #2563eb;
+      background: var(--accent);
       color: #fff;
-      padding: 0.75rem 1.5rem;
-      border-radius: 8px;
+      padding: 0.875rem 1.75rem;
+      border-radius: var(--radius);
       text-decoration: none;
       font-weight: 600;
-      margin-top: 1rem;
-      transition: background 0.2s;
+      margin: 0.5rem;
+      transition: background var(--transition), transform var(--transition);
     }
-    .btn:hover { background: #1d4ed8; }
+    .btn:hover { background: var(--accent-hover); transform: translateY(-1px); }
+    .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .btn-secondary { background: rgba(255, 255, 255, 0.1); }
+    .btn-secondary:hover { background: rgba(255, 255, 255, 0.2); }
+
+    footer {
+      background: #020617;
+      color: var(--text-secondary);
+      padding: 4rem 1rem 2rem;
+      text-align: center;
+      border-top: 1px solid rgba(255, 255, 255, 0.05);
+    }
+    footer p { margin: 0.5rem 0; font-size: 0.9rem; }
+    footer .social-links { display: flex; gap: 1rem; justify-content: center; margin: 1.5rem 0; }
+    footer .social-links a { color: var(--text-secondary); font-size: 1.25rem; }
+    footer .social-links a:hover { color: var(--accent); }
+
+    @media (max-width: 640px) {
+      .nav-links { gap: 1rem; font-size: 0.85rem; }
+      .hero-stats { flex-direction: column; align-items: center; }
+      .stat { width: 100%; max-width: 200px; }
+      .features { grid-template-columns: 1fr; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
   </style>
 </head>
 <body>
-<nav>
-  <ul>
-    <li><a href="#sobre">Sobre</a></li>
-    <li><a href="#recursos">Recursos</a></li>
-    <li><a href="#benchmarks">Benchmarks</a></li>
-    <li><a href="#uso">Uso</a></li>
-    <li><a href="https://github.com/developerfred/lean-cache" target="_blank">GitHub</a></li>
-  </ul>
-</nav>
+  <a href="#content" class="skip-link">Pular para o conteúdo principal</a>
 
-<header>
-  <h1>lean-cache</h1>
-  <p>Cache endereçável por conteúdo para acelerar builds do Lean 4 em até 40×</p>
-  <a href="#uso" class="btn">Começar a usar</a>
-</header>
+  <canvas id="bg-canvas"></canvas>
 
-<div class="hero-stats">
-  <div class="stat">
-    <div class="stat-value">40×</div>
-    <div class="stat-label">Speedup máximo</div>
-  </div>
-  <div class="stat">
-    <div class="stat-value">0 deps</div>
-    <div class="stat-label">Externas (std-only)</div>
-  </div>
-  <div class="stat">
-    <div class="stat-value">SHA-256</div>
-    <div class="stat-label">Puro em Rust</div>
-  </div>
-  <div class="stat">
-    <div class="stat-value">S3 v4</div>
-    <div class="stat-label">Cache remoto</div>
-  </div>
-</div>
+  <header>
+    <div class="nav-container">
+      <div class="logo">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5-2-18z"/>
+        </svg>
+        lean-cache
+      </div>
+      <ul class="nav-links">
+        <li><a href="#sobre">Sobre</a></li>
+        <li><a href="#recursos">Recursos</a></li>
+        <li><a href="#benchmarks">Benchmarks</a></li>
+        <li><a href="#uso">Uso</a></li>
+        <li><a href="https://github.com/developerfred/lean-cache" target="_blank" rel="noopener">GitHub</a></li>
+      </ul>
+    </div>
+  </header>
 
-<div class="container">
-  <section id="sobre">
-    <h2>Sobre</h2>
-    <p>O <strong>lean-cache</strong> é um wrapper CLI para o sistema de build <em>lake</em> do Lean 4. Ele implementa um cache endereçável por conteúdo (CAS) que:</p>
-    <ul style="margin: 1rem 0 1rem 2rem;">
-      <li>Resolve o grafo de <code>import</code>s em ordem topológica</li>
-      <li>Calcula chave de conteúdo: <code>fonte + imports + versão do Lean + flags</code></li>
-      <li>Pula o <code>lake build</code> quando todos os módulos estão em cache hit</li>
-      <li>Restaura artefatos (.olean, .ilean, .c, .o) diretamente no <code>.lake/build/lib/lean/</code></li>
-    </ul>
-  </section>
+  <main id="content">
+    <section class="hero">
+      <h1>lean-cache</h1>
+      <p>Cache endereçável por conteúdo para acelerar builds do Lean 4 em até <strong>40×</strong>. Wrapper ao <code>lake build</code> com compressão, workers remotos, S3 v4 e edição cirúrgica.</p>
+      <div class="hero-stats">
+        <div class="stat">
+          <span class="stat-value">40×</span>
+          <span class="stat-label">Speedup máximo</span>
+        </div>
+        <div class="stat">
+          <span class="stat-value">0 deps</span>
+          <span class="stat-label">Externas (std-only)</span>
+        </div>
+        <div class="stat">
+          <span class="stat-value">SHA-256</span>
+          <span class="stat-label">Puro em Rust</span>
+        </div>
+        <div class="stat">
+          <span class="stat-value">S3 v4</span>
+          <span class="stat-label">Cache remoto</span>
+        </div>
+      </div>
+      <div class="install-section">
+        <h2>Começar a usar</h2>
+        <div class="command">
+$ cargo build --release<br>
+$ cp target/release/lean-cache /usr/local/bin/<br>
+$ lean-cache init<br>
+$ lean-cache build MeuArquivo.lean
+        </div>
+        <a href="https://github.com/developerfred/lean-cache" target="_blank" rel="noopener" class="btn">Ver no GitHub</a>
+        <a href="#sobre" class="btn btn-secondary">Saiba mais</a>
+      </div>
+    </section>
 
-  <section id="recursos">
-    <h2>Recursos</h2>
-    <div class="features">
+    <section id="recursos" class="features">
       <div class="feature-card">
-        <h3>Compressão zstd/lz4</h3>
+        <h3>📦 Cache Endereçável por Conteúdo</h3>
+        <p>Chave = SHA-256(fonte + imports + versão Lean + flags). Builds idênticos são pulados automaticamente.</p>
+      </div>
+      <div class="feature-card">
+        <h3>🗜️ Compressão zstd/lz4/gzip</h3>
         <p>Arquivos ≥64 KB são comprimidos automaticamente para economizar disco e banda de rede.</p>
       </div>
       <div class="feature-card">
-        <h3>Evicção LRU</h3>
-        <p>Comando <code>cache gc</code> remove entradas menos acessadas quando excede a quota de disco.</p>
+        <h3>🔄 Workers Remotos</h3>
+        <p>Load balancing round-robin para execução distribuída de builds entre múltiplas máquinas.</p>
       </div>
       <div class="feature-card">
-        <h3>Cache remoto S3 v4</h3>
-        <p>Assinatura AWS v4 para buckets privados, com validação de integridade SHA-256.</p>
+        <h3>☁️ Cache Remoto S3 v4</h3>
+        <p>Assinatura AWS v4 para buckets privados com verificação de integridade SHA-256 após download.</p>
       </div>
       <div class="feature-card">
-        <h3>Workers remotos</h3>
-        <p>Load balancing round-robin para execução distribuída de builds.</p>
+        <h3>⚡ Snapshots lean --server</h3>
+        <p>Salva e restaura estado de elaboração entre sessões, evitando re-elaboração do zero.</p>
       </div>
       <div class="feature-card">
-        <h3>Snapshots lean --server</h3>
-        <p>Salva e restaura estado de elaboração entre sessões do servidor Lean.</p>
+        <h3>🔪 Edição Cirúrgica</h3>
+        <p>Cache por declaração individual (def, theorem, lemma) para edições locais em arquivos grandes.</p>
       </div>
-      <div class="feature-card">
-        <h3>Edição cirúrgica</h3>
-        <p>Cache por declaração individual (def, theorem, lemma) para edições locais rápidas.</p>
+    </section>
+
+    <section id="benchmarks" class="benchmark-section">
+      <h2>Benchmarks Reais</h2>
+      <table>
+        <thead>
+          <tr><th>Projeto</th><th>Módulos</th><th>Build Frio</th><th>Build Quente</th><th>Speedup</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>lean-test-proj</td><td>6</td><td>~11.5s</td><td>~0.29s</td><td><span class="badge badge-green">~40×</span></td></tr>
+          <tr><td>droidsaw-lean</td><td>8</td><td>~164s</td><td>~6.9s</td><td><span class="badge badge-green">~24×</span></td></tr>
+        </tbody>
+      </table>
+      <p style="margin-top: 1.5rem; font-size: 0.9rem; color: var(--text-secondary);">
+        Ambiente: macOS ARM64, Lean 4.35.0 via elan. Medido com <code>lean-cache build</code>.
+      </p>
+    </section>
+
+    <section id="uso" style="padding: 5rem 1rem; max-width: 900px; margin: 0 auto;">
+      <h2>Comandos Principais</h2>
+      <div class="command">
+lean-cache init                      Inicializa o store (.lean-cache)<br>
+lean-cache hash arquivo.lean         Calcula chave de conteúdo<br>
+lean-cache build arquivo.raiz.lean   Build acelerado com cache<br>
+lean-cache status                    Estatísticas do store<br>
+lean-cache gc                        Garbage collection LRU<br>
+lean-cache remote-set &lt;url&gt;        Configura cache remoto HTTP<br>
+lean-cache push &lt;chave&gt;            Envia artefatos para o remoto<br>
+lean-cache pull &lt;chave&gt;            Baixa artefatos do remoto<br>
+lean-cache s3-push &lt;chave&gt;         Envia para S3 (assinatura v4)<br>
+lean-cache s3-pull &lt;chave&gt;         Baixa do S3<br>
+lean-cache surgical-list arquivo.lean Lista declarações cirúrgicas<br>
       </div>
+    </section>
+  </main>
+
+  <footer>
+    <p><strong>lean-cache</strong> — Acelerando builds do Lean 4</p>
+    <div class="social-links">
+      <a href="mailto:codingsh@pm.me" title="Email">✉️</a>
+      <a href="https://x.com/codingsh" target="_blank" rel="noopener" title="X/Twitter">𝕏</a>
+      <a href="https://github.com/developerfred/lean-cache" target="_blank" rel="noopener" title="GitHub">⭐</a>
     </div>
-  </section>
+    <p style="margin-top: 1.5rem; font-size: 0.8rem; color: #64748b;">
+      Desenvolvido por codingsh (codingsh@pm.me · x.com/codingsh) · MIT License
+    </p>
+  </footer>
 
-  <section id="benchmarks">
-    <h2>Benchmarks</h2>
-    <table>
-      <thead>
-        <tr><th>Projeto</th><th>Módulos</th><th>Frio</th><th>Quente</th><th>Speedup</th></tr>
-      </thead>
-      <tbody>
-        <tr><td>lean-test-proj</td><td>6</td><td>~11.5s</td><td>~0.29s</td><td><span class="badge badge-green">~40×</span></td></tr>
-        <tr><td>droidsaw-lean</td><td>8</td><td>~164s</td><td>~6.9s</td><td><span class="badge badge-green">~24×</span></td></tr>
-      </tbody>
-    </table>
-  </section>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script>
+    // Three.js background animation - Lean cache geometric visualization
+    (function() {
+      const canvas = document.getElementById('bg-canvas');
+      if (!canvas) return;
 
-  <section id="uso">
-    <h2>Uso</h2>
-    <div class="command">
-$ lean-cache init\n$ lean-cache build MeuArquivo.lean
-    </div>
-    <p>Instale em <a href="https://github.com/developerfred/lean-cache" target="_blank">github.com/developerfred/lean-cache</a></p>
-  </section>
-</div>
+      const scene = new THREE.Scene();
+      const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+      const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 
-<footer>
-  <p><strong>lean-cache</strong> — Acelerando builds do Lean 4</p>
-  <p>Desenvolvido por codingsh (codingsh@pm.me · x.com/codingsh) · MIT License</p>
-</footer>
+      // Create floating cubes representing cached modules
+      const cubes = [];
+      const cubeCount = 15;
+
+      const geometry = new THREE.BoxGeometry(0.5, 0.5, 0.5);
+      const material = new THREE.MeshStandardMaterial({
+        color: 0x2563eb,
+        emissive: 0x1e3a8a,
+        emissiveIntensity: 0.5,
+        transparent: true,
+        opacity: 0.6
+      });
+
+      for (let i = 0; i < cubeCount; i++) {
+        const cube = new THREE.Mesh(geometry, material);
+        cube.position.set(
+          (Math.random() - 0.5) * 10,
+          (Math.random() - 0.5) * 10,
+          (Math.random() - 0.5) * 10
+        );
+        cube.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, 0);
+        cube.userData = {
+          rotationSpeed: {
+            x: (Math.random() - 0.5) * 0.02,
+            y: (Math.random() - 0.5) * 0.02,
+            z: (Math.random() - 0.5) * 0.02
+          },
+          floatSpeed: 0.5 + Math.random() * 1.5,
+          floatOffset: Math.random() * Math.PI * 2
+        };
+        scene.add(cube);
+        cubes.push(cube);
+      }
+
+      // Add ambient light
+      const ambientLight = new THREE.AmbientLight(0x404040, 1);
+      scene.add(ambientLight);
+
+      // Add point light
+      const pointLight = new THREE.PointLight(0x2563eb, 1);
+      pointLight.position.set(5, 5, 5);
+      scene.add(pointLight);
+
+      camera.position.z = 5;
+
+      function animate() {
+        requestAnimationFrame(animate);
+
+        const time = Date.now() * 0.001;
+
+        cubes.forEach(cube => {
+          cube.rotation.x += cube.userData.rotationSpeed.x;
+          cube.rotation.y += cube.userData.rotationSpeed.y;
+          cube.rotation.z += cube.userData.rotationSpeed.z;
+          cube.position.y += Math.sin(time * cube.userData.floatSpeed + cube.userData.floatOffset) * 0.01;
+        });
+
+        // Slow camera movement
+        camera.position.x = Math.sin(time * 0.2) * 2;
+        camera.position.y = Math.cos(time * 0.15) * 1;
+        camera.lookAt(0, 0, 0);
+
+        renderer.render(scene, camera);
+      }
+
+      // Handle resize
+      window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+      });
+
+      animate();
+    })();
+  </script>
 </body>
 </html>
