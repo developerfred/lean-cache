@@ -2,13 +2,14 @@
 
 ## Resumo executivo
 
-O projeto compila com zero warnings e já implementa praticamente todas as funcionalidades listadas no README (fases 1–4). O que falta é principalmente:
+O projeto compila com zero warnings e já implementa praticamente todas as funcionalidades listadas no README (fases 1–4). Status atualizado após rodada de correções: os itens abaixo foram implementados ou avançados; permanecem apenas melhorias de integração fina.
 
-1. **Conectar comandos listados no `print_usage()` mas ausentes no `match` do `main()`** (`s3-push`, `s3-pull`, `s3-sync`, `snap`, `snap-load`, `snap-list`)
-2. **Integrar edição cirúrgica ao `cmd_build`** — hoje ela conta hits/misses mas não afeta a decisão de pular o `lake build`
-3. **Integrar snapshots `lean --server` ao protocolo real do Lean**
-4. **Conectar workers remotos ao CLI** (módulo `worker.rs` existe mas não é usado)
-5. **Testes de integração com projetos Lean reais** (são apenas testes unitários simulados)
+1. ✅ **Conectar comandos listados no `print_usage()`** — `s3-push`, `s3-pull`, `s3-sync`, `snap`, `snap-load`, `snap-list`, `worker-add`, `worker-list`, `worker-build` implementados.
+2. ✅ **Edição cirúrgica no `cmd_build`** — declarações em miss são armazenadas no `SurgicalStore` para reuso; não invalidam o cache do módulo.
+3. ⚠️ **Snapshots `lean --server`** — `snap` agora tenta capturar estado real via `LeanServer` quando recebe um arquivo; fallback para vazio se indisponível.
+4. ✅ **Workers remotos no CLI** — comandos `worker-add/list/build` implementados e integrados.
+5. ⬜ **Testes de integração com projetos Lean reais** — ainda pendente (apenas unitários simulados).
+6. ✅ **`remote::pull_key`** — implementado via manifesto (`manifest.txt`) no push/pull.
 
 ---
 

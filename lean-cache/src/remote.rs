@@ -331,12 +331,44 @@ pub fn push_key(
         return Ok((0, 0));
     }
 
+    // Coleta nomes de artefatos e gera manifesto para permitir pull remoto.
+    let mut names: Vec<String> = Vec::new();
+    for entry in fs::read_dir(&dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_file() {
+            if let Some(name) = path.file_name() {
+                names.push(name.to_string_lossy().to_string());
+            }
+        }
+    }
+    // Evita incluir manifesto antigo na lista.
+    let manifest_path = dir.join("manifest.txt");
+    let mut manifest_content = String::new();
+    for name in &names {
+        if name != "manifest.txt" {
+            manifest_content.push_str(name);
+            manifest_content.push('\n');
+        }
+    }
+    fs::write(&manifest_path, &manifest_content)?;
+
     let mut enviados = 0usize;
     let mut falharam = 0usize;
 
-    for entry in fs::read_dir(dir)? {
-        let entry = entry?;
-        let path = entry.path();
+    // Envia manifesto primeiro.
+    if manifest_path.is_file() {
+        match remote.upload_artifact(key, &manifest_path) {
+            Ok(true) => enviados += 1,
+            _ => falharam += 1,
+        }
+    }
+
+    for name in &names {
+        if name == "manifest.txt" {
+            continue;
+        }
+        let path = dir.join(name);
         if path.is_file() {
             match remote.upload_artifact(key, &path) {
                 Ok(true) => enviados += 1,
@@ -351,14 +383,61 @@ pub fn push_key(
 /// Como não listamos remotamente, tentamos baixar as extensões conhecidas do Lean
 /// (.olean, .ilean, .c, .o) para a chave especificada.
 /// Retorna (baixados, falharam).
-/// Faz pull de uma chave do remoto para o store local.
-/// Implementação mínima: sem listagem remota genérica. Use `pull` (CLI) para baixar uma chave específica.
+/// Faz pull de uma chave do remoto para o store local usando o manifesto.
 pub fn pull_key(
-    _store: &ContentStore,
-    _remote: &RemoteClient,
-    _key: &str,
+    store: &ContentStore,
+    remote: &RemoteClient,
+    key: &str,
 ) -> std::io::Result<(usize, usize)> {
-    Ok((0, 0))
+    validate_cache_key(key)?;
+    let dir = store.object_dir_for(key)?;
+    fs::create_dir_all(&dir)?;
+
+    let manifest_dest = dir.join("manifest.txt");
+    let mut baixados = 0usize;
+    let mut falharam = 0usize;
+
+    // Baixa o manifesto.
+    match remote.download_artifact(key, "manifest.txt", &manifest_dest) {
+        Ok(true) => baixados += 1,
+        Ok(false) => {
+            // Sem manifesto: nada a fazer.
+            return Ok((baixados, falharam));
+        }
+        Err(e) => {
+            eprintln!("Aviso: erro ao baixar manifesto: {}", e);
+            return Ok((baixados, falharam));
+        }
+    }
+
+    // Lê lista de arquivos.
+    let content = fs::read_to_string(&manifest_dest)?;
+    let files: Vec<String> = content
+        .lines()
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
+        .collect();
+
+    // Baixa cada arquivo listado.
+    for file_name in &files {
+        let dest = dir.join(file_name);
+        match remote.download_artifact(key, file_name, &dest) {
+            Ok(true) => baixados += 1,
+            Ok(false) => falharam += 1,
+            Err(e) => {
+                eprintln!("Aviso: erro ao baixar {}: {}", file_name, e);
+                falharam += 1;
+            }
+        }
+    }
+
+    // Remove manifesto local para não poluir o store.
+    let _ = fs::remove_file(&manifest_dest);
+
+    // Evita arquivos vazios na contagem? mantemos.
+    let _ = files;
+
+    Ok((baixados, falharam))
 }
 
 /// Sincroniza: faz push de todas as chaves locais que ainda não existem no remoto.

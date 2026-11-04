@@ -21,7 +21,7 @@ mod worker;
 use bench::executar_suite;
 use remote::{push_key, sync_all, RemoteClient, RemoteConfig};
 use s3::{pull_key_from_s3, push_key_to_s3, S3Client, S3Config};
-use snapshots::{ElaborationSnapshot, SnapshotStore};
+use snapshots::{snapshot_key, ElaborationSnapshot, LeanServer, SnapshotStore};
 use store::{module_key, resolve_import_graph, ContentStore};
 use surgical::{extract_declarations, surgical_decl_key, SurgicalStore};
 use worker::{BuildRequest, RemoteWorkerClient, WorkerConfig, WorkerPool};
@@ -586,9 +586,8 @@ fn cmd_build(root: &Path) -> io::Result<()> {
                 decl_hits += 1;
             } else {
                 decl_misses += 1;
-                // Declaracoes cirurgicas em miss sao apenas estatistica.
-                // Elas NAO invalidam o cache do modulo inteiro: se o modulo
-                // esta em HIT no store, ja temos todos os artefatos compilados.
+                // Armazena a declaracao cirurgica para reuso futuro.
+                let _ = surgical_store.store_decl(&decl_key, decl.content.as_bytes());
             }
         }
 
@@ -1344,10 +1343,10 @@ fn main() {
         }
         "snap" => {
             if args.len() < 3 {
-                eprintln!("Uso: lean-cache snap <chave>");
+                eprintln!("Uso: lean-cache snap <arquivo.lean|chave>");
                 std::process::exit(1);
             }
-            let key = &args[2];
+            let arg = &args[2];
             let store_dir = store_dir();
             let snap_store = match SnapshotStore::open(&store_dir) {
                 Ok(s) => s,
@@ -1364,14 +1363,55 @@ fn main() {
                 },
                 None => "unknown".to_string(),
             };
+
+            // Se o argumento for um arquivo existente, captura o estado real via lean --server.
+            let (module_name, source_hash, state_data) = if Path::new(arg).is_file() {
+                let p = Path::new(arg);
+                let bytes = match fs::read(p) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        eprintln!("Erro ao ler {}: {}", p.display(), e);
+                        std::process::exit(1);
+                    }
+                };
+                let hash = sha256::sha256_hex(&bytes);
+                let mod_name = p
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("unknown")
+                    .to_string();
+
+                // Tenta capturar o estado de elaboracao real via lean --server.
+                let mut captured = Vec::new();
+                if let Ok(mut server) = LeanServer::new() {
+                    match server.capture_elaboration_state(p) {
+                        Ok(Some(data)) => captured = data,
+                        Ok(None) => {
+                            eprintln!("Aviso: lean --server nao suportou captura de estado; salvando snapshot vazio.");
+                        }
+                        Err(e) => {
+                            eprintln!("Aviso: falha ao capturar estado via lean --server: {}", e);
+                        }
+                    }
+                    let _ = server.close();
+                } else {
+                    eprintln!("Aviso: lean --server nao disponivel; salvando snapshot vazio.");
+                }
+
+                (mod_name, hash, captured)
+            } else {
+                (arg.clone(), arg.clone(), Vec::new())
+            };
+
+            let key = snapshot_key(&module_name, &source_hash, &lean_version);
             let snapshot = ElaborationSnapshot::new(
-                "unknown".to_string(),
-                key.clone(),
+                module_name,
+                source_hash,
                 lean_version,
-                Vec::new(),
+                state_data,
                 Vec::new(),
             );
-            match snap_store.save_snapshot(key, &snapshot) {
+            match snap_store.save_snapshot(&key, &snapshot) {
                 Ok(()) => println!("Snapshot salvo com chave: {}", key),
                 Err(e) => {
                     eprintln!("Erro ao salvar snapshot: {}", e);
