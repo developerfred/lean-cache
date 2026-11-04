@@ -42,53 +42,32 @@ O projeto compila com zero warnings e já implementa praticamente todas as funci
 
 ## 2. O QUE FICOU POR FAZER
 
-### A. Comandos documentados no `print_usage()` mas NÃO implementados no `match` do `main()`
+### A. Comandos documentados no `print_usage()` — ✅ IMPLEMENTADOS
 
-Estes aparecem na ajuda (`lean-cache --help`) mas não fazem nada ao digitar:
+Todos os comandos abaixo estão implementados no `match` de `main.rs`:
+`s3-push`, `s3-pull`, `s3-sync`, `snap`, `snap-load`, `snap-list`,
+`worker-add`, `worker-list`, `worker-build`.
 
-| Comando | Onde está no código | O que falta |
-|---------|---------------------|-------------|
-| `s3-push <chave>` | listado no `print_usage` (linha 91) | Ausente no `match` — precisa chamar `push_key_to_s3` de `s3.rs` |
-| `s3-pull <chave>` | listado no `print_usage` (linha 92) | Ausente no `match` — precisa chamar `pull_key_from_s3` de `s3.rs` |
-| `s3-sync` | listado no `print_usage` (linha 93) | Ausente no `match` — precisa sincronizar chaves locais para S3 |
-| `snap <chave>` | listado no `print_usage` (linha 94) | Ausente no `match` — precisa salvar snapshot via `snapshots.rs` |
-| `snap-load <chave>` | listado no `print_usage` (linha 95) | Ausente no `match` — precisa restaurar snapshot via `snapshots.rs` |
-| `snap-list` | listado no `print_usage` (linha 96) | Ausente no `match` — precisa listar snapshots via `snapshots.rs` |
+### B. Edição cirúrgica no `cmd_build` — ⚠️ PARCIALMENTE IMPLEMENTADA
 
-**Ação:** adicionar esses 6 casos ao `match` em `src/main.rs` (linhas ~1047+).
+- `decl_hits`/`decl_misses` são calculados e exibidos.
+- Declarações em miss são armazenadas no `SurgicalStore` para reuso futuro.
+- `all_hit` do módulo não é invalidado por declaração em miss (correto).
+- **Pendente:** restauração individual por declaração e recompilação parcial.
 
-### B. Edição cirúrgica não integrada ao `cmd_build` (Fase 5)
+### C. Snapshots `lean --server` — ⚠️ PARCIALMENTE IMPLEMENTADA
 
-Hoje `cmd_build` (linhas 505–568 de `main.rs`) calcula `decl_hits`/`decl_misses` mas:
+- `snap <arquivo.lean>` tenta capturar estado real via `LeanServer` e salva snapshot.
+- Fallback para snapshot vazio se `lean --server` indisponível.
+- **Pendente:** restauração prática do estado no editor/IDE.
 
-- `all_hit` é definido como `false` se **qualquer** declaração está em miss (linha 554), o que anula o benefício da edição cirúrgica: mesmo que 90% das declarações estejam em cache, se 1 mudou, executa `lake build` inteiro.
-- As declarações em hit **não são restauradas** individualmente; apenas o módulo inteiro é restaurado ou recompilado.
+### D. Workers remotos no CLI — ✅ IMPLEMENTADO
 
-**Ação:** modificar `cmd_build` para, quando houver miss parcial, reutilizar declarações cirúrgicas em cache e apenas recompilar as faltantes (ou pelo menos não invalidar o cache do módulo inteiro por causa de uma declaração).
+Comandos `worker-add`, `worker-list`, `worker-build` implementados e integrados.
 
-### C. Snapshots `lean --server` não conectados ao protocolo real (Fase 5)
+### E. `remote::pull_key` — ✅ IMPLEMENTADO
 
-O módulo `snapshots.rs` está completo (store, serialização JSON, chave por módulo+hash+versão), mas:
-
-- Não há integração com `lean --server` para capturar/restaurar o estado de elaboração real.
-- Os comandos CLI `snap`, `snap-load`, `snap-list` não existem no `match`.
-
-**Ação:** implementar a ponte entre `snapshots.rs` e o protocolo `lean --server`, e expor via CLI.
-
-### D. Workers remotos não conectados ao CLI
-
-O módulo `worker.rs` está completo (`WorkerPool`, `RemoteWorkerClient`, round-robin, base64), mas:
-
-- Nenhum comando CLI para adicionar/listar/usar workers.
-- Não é chamado de nenhum lugar em `main.rs`.
-
-**Ação:** adicionar comandos como `worker-add <url>`, `worker-list`, `worker-build <arquivo.lean>` (ou integrar ao `build` com flag `--worker`).
-
-### E. `remote::pull_key` é um stub
-
-Em `src/remote.rs` (linha 364), `pull_key` retorna `(0, 0)` sem fazer nada. O pull real é feito inline no `cmd_pull` e `cmd_build`.
-
-**Ação:** implementar corretamente ou remover.
+Implementado via manifesto (`manifest.txt`) gerado no push e consumido no pull.
 
 ### F. Outros itens de polimento
 
