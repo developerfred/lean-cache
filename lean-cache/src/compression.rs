@@ -156,15 +156,14 @@ fn compress_gzip_bytes(data: &[u8]) -> io::Result<Vec<u8>> {
 
     {
         let stdin = child.stdin.as_mut().ok_or_else(|| {
-            io::Error::new(io::ErrorKind::Other, "não foi possível abrir stdin do gzip")
+            io::Error::other("não foi possível abrir stdin do gzip")
         })?;
         stdin.write_all(data)?;
     }
 
     let output = child.wait_with_output()?;
     if !output.status.success() {
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
+        return Err(io::Error::other(
             "gzip falhou ao comprimir",
         ));
     }
@@ -189,15 +188,14 @@ fn decompress_gzip_bytes(data: &[u8]) -> io::Result<Vec<u8>> {
 
     {
         let stdin = child.stdin.as_mut().ok_or_else(|| {
-            io::Error::new(io::ErrorKind::Other, "não foi possível abrir stdin do gzip")
+            io::Error::other("não foi possível abrir stdin do gzip")
         })?;
         stdin.write_all(data)?;
     }
 
     let output = child.wait_with_output()?;
     if !output.status.success() {
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
+        return Err(io::Error::other(
             "gzip falhou ao descomprimir",
         ));
     }

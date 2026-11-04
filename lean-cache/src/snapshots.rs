@@ -258,14 +258,12 @@ impl LeanServer {
             .spawn()?;
 
         let stdin = child.stdin.take().ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::Other,
+            std::io::Error::other(
                 "não foi obter stdin do lean --server",
             )
         })?;
         let stdout = BufReader::new(child.stdout.take().ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::Other,
+            std::io::Error::other(
                 "não foi obter stdout do lean --server",
             )
         })?);
@@ -343,8 +341,7 @@ impl LeanServer {
             let resp_id = response["id"].as_u64().unwrap_or(0);
             if resp_id == expected_id as u64 {
                 if let Some(error) = response.get("error") {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    return Err(std::io::Error::other(
                         format!("erro do lean --server: {}", error),
                     ));
                 }

@@ -1014,7 +1014,7 @@ fn s3_config_from_env() -> io::Result<S3Config> {
 
 /// Caminho do arquivo de configuracao de workers (.lean-cache/workers.txt).
 fn workers_config_path() -> PathBuf {
-    PathBuf::from(store_dir().join("workers.txt"))
+    store_dir().join("workers.txt")
 }
 
 /// Carrega a lista de workers do arquivo de configuracao.

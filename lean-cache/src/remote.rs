@@ -184,8 +184,7 @@ impl RemoteClient {
             }
         }
         Err(last_err.unwrap_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::Other,
+            std::io::Error::other(
                 "curl excedeu max_retries sem sucesso",
             )
         }))
@@ -210,10 +209,11 @@ impl RemoteClient {
             .to_string_lossy();
         let url = self.artifact_url(key, &file_name)?;
 
-        let mut args = Vec::new();
-        args.push("-T");
-        args.push(local_path.to_str().unwrap_or(""));
-        args.push(url.as_str());
+        let args = vec![
+            "-T",
+            local_path.to_str().unwrap_or(""),
+            url.as_str(),
+        ];
 
         let (status, _, _stderr) = self.curl_with_retry(&args)?;
         if status == 0 {
@@ -243,11 +243,12 @@ impl RemoteClient {
 
         fs::create_dir_all(dest.parent().unwrap_or(Path::new(".")))?;
 
-        let mut args = Vec::new();
-        args.push("-o");
-        args.push(dest.to_str().unwrap_or(""));
-        args.push("--create-dirs");
-        args.push(url.as_str());
+        let args = vec![
+            "-o",
+            dest.to_str().unwrap_or(""),
+            "--create-dirs",
+            url.as_str(),
+        ];
 
         let (status, _, _stderr) = self.curl_with_retry(&args)?;
         if status == 0 && dest.is_file() {

@@ -185,12 +185,13 @@ impl RemoteWorkerClient {
             )
         })?;
 
-        let mut args = Vec::new();
-        args.push("-X");
-        args.push("POST");
-        args.push("-d");
-        args.push(json.as_str());
-        args.push(url.as_str());
+        let args = vec![
+            "-X",
+            "POST",
+            "-d",
+            json.as_str(),
+            url.as_str(),
+        ];
 
         let (status, stdout, stderr) = self.curl(&args)?;
         if status != 0 {
@@ -309,12 +310,13 @@ impl RemoteWorkerClient {
                 let url = format!("{}/store", self.config.url.trim_end_matches('/'));
                 let json = serde_json::to_string(&req).unwrap();
 
-                let mut args = Vec::new();
-                args.push("-X");
-                args.push("POST");
-                args.push("-d");
-                args.push(json.as_str());
-                args.push(url.as_str());
+                let args = vec![
+                    "-X",
+                    "POST",
+                    "-d",
+                    json.as_str(),
+                    url.as_str(),
+                ];
 
                 let (status, _, stderr) = self.curl(&args)?;
                 if status == 0 {
@@ -457,7 +459,7 @@ pub fn base64_decode(input: &str) -> Result<Vec<u8>, Base64Error> {
             result.push(((b2 & 0x03) << 6) | b3);
         }
         i += 4;
-        if chunk.iter().any(|&b| b == b'=') {
+        if chunk.contains(&b'=') {
             // padding encountered; stop
             // but only break if trailing; standard: break after padded chunk
             break;
