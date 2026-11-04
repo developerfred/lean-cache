@@ -68,7 +68,7 @@ lean-cache s3-pull <chave>       # baixa artefatos do S3
 lean-cache s3-sync               # sincroniza chaves locais para o S3
 
 # --- Snapshots de elaboração (lean --server) ---
-lean-cache snap <chave>          # salva snapshot de elaboração
+lean-cache snap <arquivo.lean>   # salva snapshot de elaboração (captura via lean --server se disponível)
 lean-cache snap-load <chave>     # restaura snapshot de elaboração
 lean-cache snap-list             # lista snapshots armazenados
 
