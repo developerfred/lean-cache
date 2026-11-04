@@ -28,6 +28,7 @@ jobs:
         run: |
           cd lean-cache
           cargo build --release
+          cargo test
           cp target/release/lean-cache /usr/local/bin/
 
       - name: Check Lean version
@@ -98,6 +99,7 @@ jobs:
         run: |
           cd lean-cache
           cargo build --release
+          cargo test
           cp target/release/lean-cache /usr/local/bin/
 
       - name: Download shared cache
