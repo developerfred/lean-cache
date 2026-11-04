@@ -220,4 +220,4 @@ O `lean-cache` implementa as seguintes medidas de segurança:
 | 4 | Compressão, evicção LRU, workers remotos, S3 v4, snapshots, cirúrgico | ✅ Concluída |
 | 5 | Build Advisor (direção WSP) + integração cirúrgica + snapshots com `lean --server` | ⬜ Planejada |
 
-Veja `PESQUISA_LEAN_BUILD.md` para a pesquisa completa e `NOTAS_DESAFIOS_IMPEDIMENTOS.md` para desafios e impedimentos registrados a cada fase.
+Veja `PESQUISA_LEAN_BUILD.md` para a pesquisa completa, `docs/ARCHITECTURE.md` para a arquitetura e `CONTRIBUTING.md` para contribuir.
