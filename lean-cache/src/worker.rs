@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 /// Workers remotos distribuidos para execucao de builds do Lean (estilo Bazel RE).
 ///
 /// Este módulo implementa um cliente simples que envia tarefas de build para

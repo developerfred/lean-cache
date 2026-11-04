@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 
 /// Edição cirúrgica (surgical editing) para o `lean-cache`.
 ///

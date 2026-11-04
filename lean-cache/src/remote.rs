@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use crate::sha256::sha256_hex;
 use crate::store::{validate_cache_key, ContentStore};
 use std::fs;
@@ -312,7 +310,6 @@ impl RemoteClient {
 
     /// Lista os arquivos de uma chave no remoto (tenta GET na pasta; depende do servidor).
     /// Retorna vazia se o servidor não suportar listagem.
-    #[allow(dead_code)]
     pub fn list_remote_artifacts(&self, _key: &str) -> std::io::Result<Vec<String>> {
         // Implementação mínima: sem listagem genérica. O caller deve saber os nomes.
         Ok(Vec::new())

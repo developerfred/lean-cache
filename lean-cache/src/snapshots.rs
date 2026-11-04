@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 /// Snapshots de estado de elaboração do `lean --server`.
 ///
 /// O Lean 4 oferece um servidor de linguagem (`lean --server`) que mantém

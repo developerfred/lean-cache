@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 
 use crate::compression::{compress_file, decompress_file, CompressionAlgorithm};
 use crate::sha256::{combine_hashes, sha256_hex};
@@ -96,7 +95,6 @@ impl ContentStore {
         })
     }
 
-    #[allow(dead_code)]
     pub fn with_config(config: CacheConfig) -> std::io::Result<Self> {
         fs::create_dir_all(&config.store_dir)?;
         let objects_root = config.store_dir.join("objects");
@@ -221,7 +219,6 @@ impl ContentStore {
     }
 
     /// Remove uma chave do store.
-    #[allow(dead_code)]
     pub fn remove(&self, key: &str) -> std::io::Result<bool> {
         let dir = self.object_dir_for(key)?;
         if dir.is_dir() {
@@ -384,7 +381,6 @@ impl ContentStore {
     }
 
     /// Lê o trace de uma chave, se existir.
-    #[allow(dead_code)]
     pub fn load_trace(&self, key: &str) -> std::io::Result<Option<TraceRecord>> {
         let dir = self.object_dir_for(key)?;
         let path = dir.join("trace.txt");
@@ -406,7 +402,6 @@ pub struct TraceRecord {
     pub lean_version: Option<String>,
     pub flags: Vec<String>,
     pub imports: Vec<String>,
-    #[allow(dead_code)]
     pub artifact_extensions: Vec<String>,
     pub built_at_ns: Option<u128>,
     pub last_accessed_ns: Option<u128>,
@@ -497,7 +492,6 @@ pub fn module_key(
 }
 
 /// Hash simples do conteúdo de um arquivo para uso no trace.
-#[allow(dead_code)]
 pub fn hash_file(path: &Path) -> std::io::Result<String> {
     let data = fs::read(path)?;
     Ok(sha256_hex(&data))

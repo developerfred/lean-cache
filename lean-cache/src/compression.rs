@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 /// Módulo de compressão de artefatos para reduzir uso de disco e banda de rede.
 /// Suporta múltiplos algoritmos com fallback automático:
 ///  - zstd (melhor taxa de compressão, requer biblioteca C)

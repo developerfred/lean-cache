@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use crate::sha256::sha256_hex;
 use crate::store::{module_key, ContentStore};
 use std::fs;

@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 /// Cache remoto S3 com assinatura AWS v4 para o `lean-cache`.
 ///
 /// Implementa upload/download de artefatos para buckets S3 (ou serviços
