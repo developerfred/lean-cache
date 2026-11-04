@@ -5,7 +5,6 @@
 ///  - zstd (melhor taxa de compressão, requer biblioteca C)
 ///  - lz4 (velocidade extrema, pure Rust via lz4_flex)
 ///  - gzip (fallback via comando externo, std-only)
-
 use crate::sha256::sha256_hex;
 use std::fs;
 use std::io::{self, Read, Write};
@@ -77,11 +76,7 @@ pub fn compress(data: &[u8], algorithm: CompressionAlgorithm) -> io::Result<Vec<
             encoder.write_all(data)?;
             encoder.finish()
         }
-        CompressionAlgorithm::Lz4 => {
-            let mut compressed = Vec::with_capacity(data.len());
-            let _ = lz4_flex::block::compress_into(data, &mut compressed);
-            Ok(compressed)
-        }
+        CompressionAlgorithm::Lz4 => Ok(lz4_flex::block::compress_prepend_size(data)),
         CompressionAlgorithm::Gzip => compress_gzip_bytes(data),
         CompressionAlgorithm::None => Ok(data.to_vec()),
     }
@@ -97,13 +92,12 @@ pub fn decompress(data: &[u8], algorithm: CompressionAlgorithm) -> io::Result<Ve
             Ok(decompressed)
         }
         CompressionAlgorithm::Lz4 => {
-            // Precisamos saber o tamanho original; lz4_flex block decompress requer tamanho.
-            // Como não armazenamos o tamanho, tentamos com um buffer grande.
-            let mut decompressed = vec![0u8; data.len() * 10];
-            let actual = lz4_flex::block::decompress_into(data, &mut decompressed)
-                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("lz4 decompress error: {}", e)))?;
-            decompressed.truncate(actual);
-            Ok(decompressed)
+            lz4_flex::block::decompress_size_prepended(data).map_err(|e| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("lz4 decompress error: {}", e),
+                )
+            })
         }
         CompressionAlgorithm::Gzip => decompress_gzip_bytes(data),
         CompressionAlgorithm::None => Ok(data.to_vec()),
@@ -155,7 +149,12 @@ fn compress_gzip_bytes(data: &[u8]) -> io::Result<Vec<u8>> {
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
-        .map_err(|e| io::Error::new(io::ErrorKind::NotFound, format!("gzip não encontrado: {}", e)))?;
+        .map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("gzip não encontrado: {}", e),
+            )
+        })?;
 
     {
         let stdin = child.stdin.as_mut().ok_or_else(|| {
@@ -183,7 +182,12 @@ fn decompress_gzip_bytes(data: &[u8]) -> io::Result<Vec<u8>> {
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
-        .map_err(|e| io::Error::new(io::ErrorKind::NotFound, format!("gzip não encontrado: {}", e)))?;
+        .map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("gzip não encontrado: {}", e),
+            )
+        })?;
 
     {
         let stdin = child.stdin.as_mut().ok_or_else(|| {
@@ -208,8 +212,8 @@ mod tests {
 
     #[test]
     fn zstd_roundtrip() {
-        let data = b"conteudo de teste para compressao zstd do lean-cache";
-        let compressed = compress(data, CompressionAlgorithm::Zstd).unwrap();
+        let data = vec![b'a'; 1000];
+        let compressed = compress(&data, CompressionAlgorithm::Zstd).unwrap();
         assert!(compressed.len() < data.len());
         let decompressed = decompress(&compressed, CompressionAlgorithm::Zstd).unwrap();
         assert_eq!(decompressed, data);

@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
-use crate::store::{validate_cache_key, ContentStore};
 use crate::sha256::sha256_hex;
+use crate::store::{validate_cache_key, ContentStore};
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -125,21 +125,13 @@ impl RemoteClient {
     /// Executa um curl com argumentos e retorna (exit_status, stdout, stderr).
     fn curl_once(&self, args: &[&str]) -> std::io::Result<(i32, String, String)> {
         let mut cmd = Command::new("curl");
-        cmd.args(args)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+        cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
         // Timeout de conexão e total.
-        cmd.arg(format!(
-            "--connect-timeout={}",
-            self.config.timeout_secs
-        ))
-        .arg(format!(
-            "--max-time={}",
-            self.config.timeout_secs
-        ))
-        .arg("--fail-with-body")
-        .arg("--silent")
-        .arg("--show-error");
+        cmd.arg(format!("--connect-timeout={}", self.config.timeout_secs))
+            .arg(format!("--max-time={}", self.config.timeout_secs))
+            .arg("--fail-with-body")
+            .arg("--silent")
+            .arg("--show-error");
 
         for h in self.headers() {
             cmd.arg("-H").arg(h.as_str());
@@ -194,7 +186,10 @@ impl RemoteClient {
             }
         }
         Err(last_err.unwrap_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::Other, "curl excedeu max_retries sem sucesso")
+            std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "curl excedeu max_retries sem sucesso",
+            )
         }))
     }
 
@@ -202,28 +197,17 @@ impl RemoteClient {
     /// Retorna Ok(true) se existe, Ok(false) se não existe (404), ou Err em erro de rede.
     pub fn key_exists_remote(&self, key: &str) -> std::io::Result<bool> {
         let url = self.key_url(key)?;
-        let (status, _, _) = self.curl_with_retry(&[
-            "--head",
-            "--request",
-            "HEAD",
-            url.as_str(),
-        ])?;
+        let (status, _, _) =
+            self.curl_with_retry(&["--head", "--request", "HEAD", url.as_str()])?;
         Ok(status == 0)
     }
 
     /// Faz upload de um único arquivo para o remoto.
-    pub fn upload_artifact(
-        &self,
-        key: &str,
-        local_path: &Path,
-    ) -> std::io::Result<bool> {
+    pub fn upload_artifact(&self, key: &str, local_path: &Path) -> std::io::Result<bool> {
         let file_name = local_path
             .file_name()
             .ok_or_else(|| {
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    "sem nome de arquivo",
-                )
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, "sem nome de arquivo")
             })?
             .to_string_lossy();
         let url = self.artifact_url(key, &file_name)?;
@@ -238,7 +222,10 @@ impl RemoteClient {
             Ok(true)
         } else {
             // Não logar URL completa (pode conter credenciais ou dados sensíveis)
-            eprintln!("Aviso: falha ao enviar arquivo para o remoto (curl status {})", status);
+            eprintln!(
+                "Aviso: falha ao enviar arquivo para o remoto (curl status {})",
+                status
+            );
             Ok(false)
         }
     }
@@ -254,9 +241,7 @@ impl RemoteClient {
     ) -> std::io::Result<bool> {
         let url = self.artifact_url(key, file_name)?;
         // Valida que dest não escapa para fora do diretório esperado
-        let _canonical_dest = dest
-            .canonicalize()
-            .unwrap_or_else(|_| dest.to_path_buf());
+        let _canonical_dest = dest.canonicalize().unwrap_or_else(|_| dest.to_path_buf());
 
         fs::create_dir_all(dest.parent().unwrap_or(Path::new(".")))?;
 
@@ -302,7 +287,11 @@ impl RemoteClient {
         let dados = match fs::read(dest) {
             Ok(d) => d,
             Err(e) => {
-                eprintln!("Aviso: não foi possível ler {} para verificação: {}", dest.display(), e);
+                eprintln!(
+                    "Aviso: não foi possível ler {} para verificação: {}",
+                    dest.display(),
+                    e
+                );
                 let _ = fs::remove_file(dest);
                 return Ok(false);
             }
@@ -337,7 +326,7 @@ pub fn push_key(
     remote: &RemoteClient,
     key: &str,
 ) -> std::io::Result<(usize, usize)> {
-    let dir = store.object_dir_for(key);
+    let dir = store.object_dir_for(key)?;
     if !dir.is_dir() {
         return Ok((0, 0));
     }
@@ -359,16 +348,16 @@ pub fn push_key(
 }
 
 /// Faz pull de uma chave do remoto para o store local.
-/// Como não listamos remotamente, o caller deve passar os nomes de arquivo esperados.
-/// Tentamos baixar as extensões conhecidas do Lean.
+/// Como não listamos remotamente, tentamos baixar as extensões conhecidas do Lean
+/// (.olean, .ilean, .c, .o) para a chave especificada.
+/// Retorna (baixados, falharam).
+/// Faz pull de uma chave do remoto para o store local.
+/// Implementação mínima: sem listagem remota genérica. Use `pull` (CLI) para baixar uma chave específica.
 pub fn pull_key(
     _store: &ContentStore,
     _remote: &RemoteClient,
     _key: &str,
 ) -> std::io::Result<(usize, usize)> {
-    // Implementação mínima: pull individual depende de listagem remota,
-    // que ainda não está implementada. Use `sync` para push e `pull` (CLI)
-    // para baixar uma chave específica.
     Ok((0, 0))
 }
 
@@ -398,7 +387,7 @@ pub fn sync_all(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
+    use std::path::PathBuf;
 
     #[test]
     fn remote_config_roundtrip() -> std::io::Result<()> {
@@ -407,6 +396,8 @@ mod tests {
             base_url: "https://cache.exemplo.com".to_string(),
             auth_token: Some("tok123".to_string()),
             timeout_secs: 120,
+            max_retries: 3,
+            backoff_base_secs: 2,
         };
         cfg.save(&dir)?;
         let loaded = RemoteConfig::load(&dir);
@@ -423,15 +414,13 @@ mod tests {
             ..Default::default()
         };
         let remote = RemoteClient::new(cfg);
-        let url = remote.artifact_url("abcd1234", "mod.olean");
+        let url = remote.artifact_url("abcd1234", "mod.olean").unwrap();
         assert_eq!(url, "https://cache.exemplo.com/objects/abcd1234/mod.olean");
     }
 
     fn tempfile_dir() -> std::io::Result<PathBuf> {
-        let dir = std::env::temp_dir().join(format!(
-            "lean-cache-remote-test-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("lean-cache-remote-test-{}", std::process::id()));
         fs::create_dir_all(&dir)?;
         Ok(dir)
     }

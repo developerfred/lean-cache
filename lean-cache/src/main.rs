@@ -8,20 +8,23 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-mod sha256;
-mod store;
-mod remote;
-mod compression;
-mod worker;
-mod surgical;
-mod snapshots;
-mod s3;
 mod bench;
+mod compression;
+mod remote;
+mod s3;
+mod sha256;
+mod snapshots;
+mod store;
+mod surgical;
+mod worker;
 
-use store::{ContentStore, resolve_import_graph, module_key};
-use remote::{RemoteClient, RemoteConfig, push_key, sync_all};
-use surgical::{SurgicalStore, extract_declarations, surgical_decl_key};
 use bench::executar_suite;
+use remote::{push_key, sync_all, RemoteClient, RemoteConfig};
+use s3::{pull_key_from_s3, push_key_to_s3, S3Client, S3Config};
+use snapshots::{ElaborationSnapshot, SnapshotStore};
+use store::{module_key, resolve_import_graph, ContentStore};
+use surgical::{extract_declarations, surgical_decl_key, SurgicalStore};
+use worker::{BuildRequest, RemoteWorkerClient, WorkerConfig, WorkerPool};
 
 const ARTIFACT_EXTENSIONS: &[&str] = &["olean", "ilean", "c", "o"];
 
@@ -97,7 +100,10 @@ fn print_usage() {
           surgical-list <arquivo.lean>  Lista declaracoes cirurgicas de um arquivo\n\
           surgical-store <arquivo.lean> Armazena declaracoes cirurgicas no cache\n\
           surgical-get <arquivo.lean>   Restaura declaracoes cirurgicas do cache\n\
-          bench                     Executa suite de benchmark (simulado)"
+          bench                     Executa suite de benchmark (simulado)
+
+Variavel de ambiente:
+  LEAN_CACHE_DIR   Diretorio do store de cache (padrao: .lean-cache)"
     );
 }
 
@@ -113,7 +119,10 @@ fn cmd_init(store_dir: &Path) -> io::Result<()> {
     );
     fs::write(&config_path, config)?;
     println!("Store inicializado em: {}", store_dir.display());
-    println!("Artefatos serao guardados em: {}", store_dir.join("objects").display());
+    println!(
+        "Artefatos serao guardados em: {}",
+        store_dir.join("objects").display()
+    );
     Ok(())
 }
 
@@ -135,7 +144,7 @@ fn cmd_store(key: &str, dir: &Path) -> io::Result<()> {
         eprintln!("Erro: diretorio nao encontrado: {}", dir.display());
         std::process::exit(1);
     }
-    let store = ContentStore::open(".lean-cache")?;
+    let store = ContentStore::open(store_dir())?;
     let mut artifacts: Vec<PathBuf> = Vec::new();
     for ext in ARTIFACT_EXTENSIONS {
         for entry in fs::read_dir(dir)? {
@@ -151,21 +160,30 @@ fn cmd_store(key: &str, dir: &Path) -> io::Result<()> {
         }
     }
     store.store(key, &artifacts)?;
-    println!("Armazenados {} artefato(s) sob a chave {}", artifacts.len(), key);
+    println!(
+        "Armazenados {} artefato(s) sob a chave {}",
+        artifacts.len(),
+        key
+    );
     Ok(())
 }
 
 /// Comando get.
 fn cmd_get(key: &str, dest: &Path) -> io::Result<()> {
-    let store = ContentStore::open(".lean-cache")?;
+    let store = ContentStore::open(store_dir())?;
     let restored = store.restore(key, dest)?;
-    println!("Restaurados {} artefato(s) da chave {} para {}", restored.len(), key, dest.display());
+    println!(
+        "Restaurados {} artefato(s) da chave {} para {}",
+        restored.len(),
+        key,
+        dest.display()
+    );
     Ok(())
 }
 
 /// Comando status.
 fn cmd_status() -> io::Result<()> {
-    let store = ContentStore::open(".lean-cache")?;
+    let store = ContentStore::open(store_dir())?;
     let keys = store.list_keys()?;
     let size = store.size_bytes()?;
     println!("Status do store (.lean-cache)");
@@ -185,7 +203,7 @@ fn cmd_status() -> io::Result<()> {
 
 /// Comando remote-set: define a URL base do cache remoto.
 fn cmd_remote_set(url: &str) -> io::Result<()> {
-    let store_dir = PathBuf::from(".lean-cache");
+    let store_dir = store_dir();
     fs::create_dir_all(&store_dir)?;
     let mut config = RemoteConfig::load(&store_dir);
     config.base_url = url.to_string();
@@ -196,7 +214,7 @@ fn cmd_remote_set(url: &str) -> io::Result<()> {
 
 /// Comando push: envia os artefatos de uma chave para o remoto.
 fn cmd_push(key: &str) -> io::Result<()> {
-    let store_dir = PathBuf::from(".lean-cache");
+    let store_dir = store_dir();
     let store = ContentStore::open(&store_dir)?;
     let config = RemoteConfig::load(&store_dir);
     if config.base_url.is_empty() {
@@ -216,7 +234,7 @@ fn cmd_push(key: &str) -> io::Result<()> {
 /// Usa verificação de integridade (SHA-256) e, se o remoto estiver indisponível,
 /// mantém o que já estiver em cache local (fallback implícito).
 fn cmd_pull(key: &str) -> io::Result<()> {
-    let store_dir = PathBuf::from(".lean-cache");
+    let store_dir = store_dir();
     let store = ContentStore::open(&store_dir)?;
     let config = RemoteConfig::load(&store_dir);
     if config.base_url.is_empty() {
@@ -227,7 +245,10 @@ fn cmd_pull(key: &str) -> io::Result<()> {
 
     // Se ja existe localmente, nao precisa baixar (fallback local).
     if store.contains(key) {
-        println!("Chave {} ja existe localmente (cache local). Nada a fazer.", key);
+        println!(
+            "Chave {} ja existe localmente (cache local). Nada a fazer.",
+            key
+        );
         return Ok(());
     }
 
@@ -240,12 +261,18 @@ fn cmd_pull(key: &str) -> io::Result<()> {
                 "Aviso: não foi possível consultar o cache remoto ({}), fallback para build local.",
                 e
             );
-            eprintln!("Chave {} não encontrada localmente e remoto indisponível.", key);
+            eprintln!(
+                "Chave {} não encontrada localmente e remoto indisponível.",
+                key
+            );
             return Ok(());
         }
     };
     if !existe_remoto {
-        eprintln!("Erro: chave {} não encontrada no remoto nem localmente.", key);
+        eprintln!(
+            "Erro: chave {} não encontrada no remoto nem localmente.",
+            key
+        );
         std::process::exit(1);
     }
 
@@ -256,7 +283,7 @@ fn cmd_pull(key: &str) -> io::Result<()> {
     let mut falharam = 0usize;
     for ext in ARTIFACT_EXTENSIONS {
         let file_name = format!("{}.{}", key, ext);
-        let dest = store.object_dir_for(key).join(&file_name);
+        let dest = store.object_dir_for(key)?.join(&file_name);
         match remote.download_artifact_verified(key, &file_name, &dest, key) {
             Ok(true) => baixados += 1,
             Ok(false) => falharam += 1, // arquivo não existe ou integridade falhou
@@ -268,13 +295,15 @@ fn cmd_pull(key: &str) -> io::Result<()> {
     }
 
     // Remove o diretório se nada baixou.
-    let dir = store.object_dir_for(key);
-    let tem_arquivos = dir.is_dir()
-        && fs::read_dir(&dir)?
-            .any(|e| e.map(|e| e.path().is_file()).unwrap_or(false));
+    let dir = store.object_dir_for(key)?;
+    let tem_arquivos =
+        dir.is_dir() && fs::read_dir(&dir)?.any(|e| e.map(|e| e.path().is_file()).unwrap_or(false));
     if !tem_arquivos {
         let _ = fs::remove_dir_all(&dir);
-        eprintln!("Aviso: nenhum artefato baixado para a chave {} (verifique integridade do remoto).", key);
+        eprintln!(
+            "Aviso: nenhum artefato baixado para a chave {} (verifique integridade do remoto).",
+            key
+        );
     }
 
     println!(
@@ -286,7 +315,7 @@ fn cmd_pull(key: &str) -> io::Result<()> {
 
 /// Comando sync: faz push de todas as chaves locais ainda nao no remoto.
 fn cmd_sync() -> io::Result<()> {
-    let store_dir = PathBuf::from(".lean-cache");
+    let store_dir = store_dir();
     let store = ContentStore::open(&store_dir)?;
     let config = RemoteConfig::load(&store_dir);
     if config.base_url.is_empty() {
@@ -304,7 +333,7 @@ fn cmd_sync() -> io::Result<()> {
 
 /// Comando clean.
 fn cmd_clean() -> io::Result<()> {
-    let store_dir = PathBuf::from(".lean-cache");
+    let store_dir = store_dir();
     if store_dir.exists() {
         fs::remove_dir_all(&store_dir)?;
         println!("Store removido: {}", store_dir.display());
@@ -317,7 +346,7 @@ fn cmd_clean() -> io::Result<()> {
 /// Comando gc: garante que o store nao exceda a quota configurada (max_store_bytes),
 /// removendo entradas menos recentemente acessadas (LRU).
 fn cmd_gc() -> io::Result<()> {
-    let store_dir = PathBuf::from(".lean-cache");
+    let store_dir = store_dir();
     let store = ContentStore::open(&store_dir)?;
     let (removidas, liberados) = store.cache_gc()?;
     println!(
@@ -360,7 +389,7 @@ fn cmd_surgical_store(source_path: &Path) -> io::Result<()> {
     }
     let source = fs::read_to_string(source_path)?;
     let declarations = extract_declarations(&source);
-    let surgical_store = SurgicalStore::open(".lean-cache")?;
+    let surgical_store = SurgicalStore::open(store_dir())?;
     let lean_version = None; // Sem versao do Lean para uso standalone
     let _flags: Vec<String> = Vec::new();
 
@@ -387,7 +416,9 @@ fn cmd_surgical_store(source_path: &Path) -> io::Result<()> {
 
     println!(
         "Surgical store: {} armazenado(s), {} ja existiam, {} total.",
-        stored, skipped, declarations.len()
+        stored,
+        skipped,
+        declarations.len()
     );
     Ok(())
 }
@@ -400,7 +431,7 @@ fn cmd_surgical_get(source_path: &Path, dest_dir: &Path) -> io::Result<()> {
     }
     let source = fs::read_to_string(source_path)?;
     let declarations = extract_declarations(&source);
-    let surgical_store = SurgicalStore::open(".lean-cache")?;
+    let surgical_store = SurgicalStore::open(store_dir())?;
     let lean_version = None;
 
     fs::create_dir_all(dest_dir)?;
@@ -409,11 +440,7 @@ fn cmd_surgical_get(source_path: &Path, dest_dir: &Path) -> io::Result<()> {
     let mut missing = 0usize;
 
     for decl in &declarations {
-        let dep_keys: Vec<String> = decl
-            .depends_on
-            .iter()
-            .filter_map(|_| None)
-            .collect();
+        let dep_keys: Vec<String> = decl.depends_on.iter().filter_map(|_| None).collect();
         let decl_key = surgical_decl_key(&decl.content, &dep_keys, &lean_version);
 
         match surgical_store.restore_decl(&decl_key)? {
@@ -426,7 +453,8 @@ fn cmd_surgical_get(source_path: &Path, dest_dir: &Path) -> io::Result<()> {
                 missing += 1;
                 println!(
                     "  Declaracao nao encontrada no cache: {} (chave {})",
-                    decl.name, &decl.content_hash[..8]
+                    decl.name,
+                    &decl.content_hash[..8]
                 );
             }
         }
@@ -434,7 +462,9 @@ fn cmd_surgical_get(source_path: &Path, dest_dir: &Path) -> io::Result<()> {
 
     println!(
         "Surgical get: {} restaurado(s), {} nao encontrado(s), {} total.",
-        restored, missing, declarations.len()
+        restored,
+        missing,
+        declarations.len()
     );
     Ok(())
 }
@@ -467,10 +497,12 @@ fn cmd_build(root: &Path) -> io::Result<()> {
     let roots = vec![root_dir.clone()];
 
     // Verifica se e um projeto Lake (tem lakefile.toml ou lakefile.lean).
-    let is_lake_project = root_dir.join("lakefile.toml").is_file()
-        || root_dir.join("lakefile.lean").is_file();
+    let is_lake_project =
+        root_dir.join("lakefile.toml").is_file() || root_dir.join("lakefile.lean").is_file();
     if !is_lake_project {
-        eprintln!("Aviso: nenhum lakefile encontrado. Use 'lean-cache build' dentro de um projeto Lake.");
+        eprintln!(
+            "Aviso: nenhum lakefile encontrado. Use 'lean-cache build' dentro de um projeto Lake."
+        );
     }
 
     // Resolve grafo de imports (ordem topologica).
@@ -487,8 +519,8 @@ fn cmd_build(root: &Path) -> io::Result<()> {
         std::process::exit(1);
     }
 
-    let store = ContentStore::open(".lean-cache")?;
-    let surgical_store = SurgicalStore::open(".lean-cache")?;
+    let store = ContentStore::open(store_dir())?;
+    let surgical_store = SurgicalStore::open(store_dir())?;
     let lean_version = detect_lean_version(&lake)?;
     let _flags: Vec<String> = Vec::new();
 
@@ -531,7 +563,11 @@ fn cmd_build(root: &Path) -> io::Result<()> {
         let source_text = match fs::read_to_string(source_path) {
             Ok(t) => t,
             Err(e) => {
-                eprintln!("Erro ao ler {} para analise cirurgica: {}", source_path.display(), e);
+                eprintln!(
+                    "Erro ao ler {} para analise cirurgica: {}",
+                    source_path.display(),
+                    e
+                );
                 std::process::exit(1);
             }
         };
@@ -550,8 +586,9 @@ fn cmd_build(root: &Path) -> io::Result<()> {
                 decl_hits += 1;
             } else {
                 decl_misses += 1;
-                // Uma declaracao em miss significa que nao podemos pular o build inteiro.
-                all_hit = false;
+                // Declaracoes cirurgicas em miss sao apenas estatistica.
+                // Elas NAO invalidam o cache do modulo inteiro: se o modulo
+                // esta em HIT no store, ja temos todos os artefatos compilados.
             }
         }
 
@@ -582,10 +619,15 @@ fn cmd_build(root: &Path) -> io::Result<()> {
                 restore_artifacts_to_lake(&mod_out, &lake_build_dir, module_name)?;
             }
         }
-        println!("\nResultado: {} hit(s), 0 miss(es) - build pulado via cache.", hits);
+        println!(
+            "\nResultado: {} hit(s), 0 miss(es) - build pulado via cache.",
+            hits
+        );
         println!(
             "  Cirurgico: {} declaracao(oes) hit, {} miss de {} total.",
-            decl_hits, decl_misses, decl_hits + decl_misses
+            decl_hits,
+            decl_misses,
+            decl_hits + decl_misses
         );
         return Ok(());
     }
@@ -593,20 +635,24 @@ fn cmd_build(root: &Path) -> io::Result<()> {
     // Antes de executar lake build, tenta buscar no cache remoto os modulos em MISS.
     // Se o remoto tiver a chave, baixamos e tratamos como hit (fallback: se remoto
     // estiver offline, seguimos para lake build local).
-    let config = RemoteConfig::load(&PathBuf::from(".lean-cache"));
+    let config = RemoteConfig::load(&store_dir());
     if !config.base_url.is_empty() {
         let remote = RemoteClient::new(config);
         for (status, _source_path, module_name, key) in &module_decisions {
             if *status != "MISS" {
                 continue;
             }
-            println!("[REMOTO] tentando pull de {} (chave {}) ...", module_name, &key[..8]);
-            let store_dir = PathBuf::from(".lean-cache");
+            println!(
+                "[REMOTO] tentando pull de {} (chave {}) ...",
+                module_name,
+                &key[..8]
+            );
+            let store_dir = store_dir();
             let store_tmp = ContentStore::open(&store_dir)?;
             let mut baixou_algo = false;
             for ext in ARTIFACT_EXTENSIONS {
                 let file_name = format!("{}.{}", key, ext);
-                let dest = store_tmp.object_dir_for(key).join(&file_name);
+                let dest = store_tmp.object_dir_for(key)?.join(&file_name);
                 match remote.download_artifact_verified(key, &file_name, &dest, key) {
                     Ok(true) => {
                         baixou_algo = true;
@@ -630,15 +676,18 @@ fn cmd_build(root: &Path) -> io::Result<()> {
                 );
             }
         }
-        println!("\nApós consulta ao remoto: {} hit(s) locais, remoto consultado para {} miss(es).", hits, misses);
+        println!(
+            "\nApós consulta ao remoto: {} hit(s) locais, remoto consultado para {} miss(es).",
+            hits, misses
+        );
     }
 
     // Verifica se todos os modulos agora estam resolvidos (hit local ou hit remoto).
     // Como não rastreamos hit-remoto separadamente, executamos lake build se houver
     // qualquer modulo que não tenha artefatos locais após a tentativa de remoto.
-    let todos_resolvidos = module_decisions.iter().all(|(status, _, _, key)| {
-        *status == "HIT" || store.contains(key)
-    });
+    let todos_resolvidos = module_decisions
+        .iter()
+        .all(|(status, _, _, key)| *status == "HIT" || store.contains(key));
 
     if todos_resolvidos {
         println!("\nTodos os modulos resolvidos (cache local + remoto). Pulando lake build...");
@@ -660,7 +709,9 @@ fn cmd_build(root: &Path) -> io::Result<()> {
         );
         println!(
             "  Cirurgico: {} declaracao(oes) hit, {} miss de {} total.",
-            decl_hits, decl_misses, decl_hits + decl_misses
+            decl_hits,
+            decl_misses,
+            decl_hits + decl_misses
         );
         return Ok(());
     }
@@ -753,11 +804,15 @@ fn cmd_build(root: &Path) -> io::Result<()> {
 
     println!(
         "\nResultado: {} hit(s), {} miss(es) de {} modulo(s).",
-        hits, misses, graph.len()
+        hits,
+        misses,
+        graph.len()
     );
     println!(
         "  Cirurgico: {} declaracao(oes) hit, {} miss de {} total.",
-        decl_hits, decl_misses, decl_hits + decl_misses
+        decl_hits,
+        decl_misses,
+        decl_hits + decl_misses
     );
     Ok(())
 }
@@ -882,7 +937,8 @@ fn restore_artifacts_to_lake(
     // Segurança: valida module_name para prevenir path traversal.
     let validated_name = validate_module_name(module_name)?;
     let (pkg_subdir, file_base) = if let Some(dot_pos) = validated_name.rfind('.') {
-        let pkg = &validated_name[..dot_pos].replace('.', std::path::MAIN_SEPARATOR.to_string().as_str());
+        let pkg =
+            &validated_name[..dot_pos].replace('.', std::path::MAIN_SEPARATOR.to_string().as_str());
         let base = &validated_name[dot_pos + 1..];
         (pkg.to_string(), base.to_string())
     } else {
@@ -927,6 +983,89 @@ fn detect_lean_version(lean: &Path) -> io::Result<Option<String>> {
     }
 }
 
+/// Le a configuracao S3 a partir de variaveis de ambiente.
+/// Espera: S3_BUCKET, S3_REGION, S3_ACCESS_KEY, S3_SECRET_KEY, S3_ENDPOINT (opcional).
+fn s3_config_from_env() -> io::Result<S3Config> {
+    let bucket = std::env::var("S3_BUCKET")
+        .map_err(|_| io::Error::new(io::ErrorKind::NotFound, "variavel S3_BUCKET nao definida"))?;
+    let region = std::env::var("S3_REGION")
+        .map_err(|_| io::Error::new(io::ErrorKind::NotFound, "variavel S3_REGION nao definida"))?;
+    let access_key = std::env::var("S3_ACCESS_KEY").map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            "variavel S3_ACCESS_KEY nao definida",
+        )
+    })?;
+    let secret_key = std::env::var("S3_SECRET_KEY").map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            "variavel S3_SECRET_KEY nao definida",
+        )
+    })?;
+    let endpoint = std::env::var("S3_ENDPOINT").ok();
+    Ok(S3Config {
+        bucket,
+        region,
+        endpoint,
+        access_key,
+        secret_key,
+        no_sign: false,
+    })
+}
+
+/// Caminho do arquivo de configuracao de workers (.lean-cache/workers.txt).
+fn workers_config_path() -> PathBuf {
+    PathBuf::from(store_dir().join("workers.txt"))
+}
+
+/// Carrega a lista de workers do arquivo de configuracao.
+fn load_workers() -> Vec<WorkerConfig> {
+    let path = workers_config_path();
+    if !path.is_file() {
+        return Vec::new();
+    }
+    let mut workers = Vec::new();
+    if let Ok(data) = std::fs::read_to_string(&path) {
+        for line in data.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            workers.push(WorkerConfig {
+                url: line.to_string(),
+                auth_token: None,
+                timeout_secs: 30,
+                max_retries: 3,
+                weight: 1,
+            });
+        }
+    }
+    workers
+}
+
+/// Salva a lista de workers no arquivo de configuracao.
+fn save_workers(workers: &[WorkerConfig]) -> io::Result<()> {
+    let path = workers_config_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut lines = Vec::new();
+    for w in workers {
+        lines.push(w.url.clone());
+    }
+    std::fs::write(path, lines.join("\n") + "\n")
+}
+
+/// Retorna o diretorio do store de cache.
+/// Usa a variavel de ambiente LEAN_CACHE_DIR se definida, caso contrario padrao ".lean-cache".
+fn store_dir() -> PathBuf {
+    std::env::var("LEAN_CACHE_DIR")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(".lean-cache"))
+}
+
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
@@ -938,7 +1077,7 @@ fn main() {
 
     match comando.as_str() {
         "init" => {
-            let store_dir = PathBuf::from(".lean-cache");
+            let store_dir = store_dir();
             if let Err(e) = cmd_init(&store_dir) {
                 eprintln!("Erro no init: {}", e);
                 std::process::exit(1);
@@ -1073,6 +1212,431 @@ fn main() {
                 eprintln!("Erro no surgical-get: {}", e);
                 std::process::exit(1);
             }
+        }
+        "s3-push" => {
+            if args.len() < 3 {
+                eprintln!("Uso: lean-cache s3-push <chave>");
+                std::process::exit(1);
+            }
+            let key = &args[2];
+            let store_dir = store_dir();
+            let store = match ContentStore::open(&store_dir) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("Erro ao abrir store: {}", e);
+                    std::process::exit(1);
+                }
+            };
+            let config = match s3_config_from_env() {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("Erro ao ler configuracao S3: {}", e);
+                    eprintln!("Defina S3_BUCKET, S3_REGION, S3_ACCESS_KEY, S3_SECRET_KEY (e opcional S3_ENDPOINT).");
+                    std::process::exit(1);
+                }
+            };
+            let client = S3Client::new(config);
+            match push_key_to_s3(&store, &client, key) {
+                Ok((enviados, falharam)) => {
+                    println!(
+                        "S3 push da chave {}: {} enviado(s), {} falharam.",
+                        key, enviados, falharam
+                    );
+                }
+                Err(e) => {
+                    eprintln!("Erro no S3 push: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        "s3-pull" => {
+            if args.len() < 3 {
+                eprintln!("Uso: lean-cache s3-pull <chave>");
+                std::process::exit(1);
+            }
+            let key = &args[2];
+            let store_dir = store_dir();
+            let store = match ContentStore::open(&store_dir) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("Erro ao abrir store: {}", e);
+                    std::process::exit(1);
+                }
+            };
+            let config = match s3_config_from_env() {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("Erro ao ler configuracao S3: {}", e);
+                    std::process::exit(1);
+                }
+            };
+            let client = S3Client::new(config);
+            match pull_key_from_s3(&store, &client, key) {
+                Ok((baixados, falharam)) => {
+                    println!(
+                        "S3 pull da chave {}: {} baixado(s), {} falharam.",
+                        key, baixados, falharam
+                    );
+                }
+                Err(e) => {
+                    eprintln!("Erro no S3 pull: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        "s3-sync" => {
+            let store_dir = store_dir();
+            let store = match ContentStore::open(&store_dir) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("Erro ao abrir store: {}", e);
+                    std::process::exit(1);
+                }
+            };
+            let config = match s3_config_from_env() {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("Erro ao ler configuracao S3: {}", e);
+                    std::process::exit(1);
+                }
+            };
+            let client = S3Client::new(config);
+            let keys = match store.list_keys() {
+                Ok(k) => k,
+                Err(e) => {
+                    eprintln!("Erro ao listar chaves locais: {}", e);
+                    std::process::exit(1);
+                }
+            };
+            let mut enviados = 0usize;
+            let mut falharam = 0usize;
+            let mut pulados = 0usize;
+            for key in &keys {
+                // Verifica se pelo menos um artefato ja existe no S3 para esta chave.
+                let s3_key = format!("objects/{}/{}.olean", key, key);
+                match client.object_exists(&s3_key) {
+                    Ok(true) => {
+                        pulados += 1;
+                        continue;
+                    }
+                    Ok(false) => {}
+                    Err(e) => {
+                        eprintln!("Aviso: erro ao verificar S3 para chave {}: {}", key, e);
+                        falharam += 1;
+                        continue;
+                    }
+                }
+                match push_key_to_s3(&store, &client, key) {
+                    Ok((ok, fail)) => {
+                        enviados += ok;
+                        falharam += fail;
+                    }
+                    Err(e) => {
+                        eprintln!("Erro ao fazer S3 push da chave {}: {}", key, e);
+                        falharam += 1;
+                    }
+                }
+            }
+            println!(
+                "S3 sync: {} enviado(s), {} falharam, {} ja no S3.",
+                enviados, falharam, pulados
+            );
+        }
+        "snap" => {
+            if args.len() < 3 {
+                eprintln!("Uso: lean-cache snap <chave>");
+                std::process::exit(1);
+            }
+            let key = &args[2];
+            let store_dir = store_dir();
+            let snap_store = match SnapshotStore::open(&store_dir) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("Erro ao abrir store de snapshots: {}", e);
+                    std::process::exit(1);
+                }
+            };
+            // Detecta versao do Lean, se possivel.
+            let lean_version = match find_lake() {
+                Some(lake) => match detect_lean_version(&lake) {
+                    Ok(v) => v.unwrap_or_else(|| "unknown".to_string()),
+                    Err(_) => "unknown".to_string(),
+                },
+                None => "unknown".to_string(),
+            };
+            let snapshot = ElaborationSnapshot::new(
+                "unknown".to_string(),
+                key.clone(),
+                lean_version,
+                Vec::new(),
+                Vec::new(),
+            );
+            match snap_store.save_snapshot(key, &snapshot) {
+                Ok(()) => println!("Snapshot salvo com chave: {}", key),
+                Err(e) => {
+                    eprintln!("Erro ao salvar snapshot: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        "snap-load" => {
+            if args.len() < 3 {
+                eprintln!("Uso: lean-cache snap-load <chave>");
+                std::process::exit(1);
+            }
+            let key = &args[2];
+            let store_dir = store_dir();
+            let snap_store = match SnapshotStore::open(&store_dir) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("Erro ao abrir store de snapshots: {}", e);
+                    std::process::exit(1);
+                }
+            };
+            match snap_store.load_snapshot(key) {
+                Ok(Some(snap)) => {
+                    println!("Snapshot carregado: chave={}", key);
+                    println!("  modulo: {}", snap.module_name);
+                    println!("  versao Lean: {}", snap.lean_version);
+                    println!("  tamanho: {} bytes", snap.size_bytes);
+                    println!("  declaracoes: {}", snap.declaration_keys.len());
+                }
+                Ok(None) => {
+                    println!("Nenhum snapshot encontrado para a chave: {}", key);
+                }
+                Err(e) => {
+                    eprintln!("Erro ao carregar snapshot: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        "snap-list" => {
+            let store_dir = store_dir();
+            let snap_store = match SnapshotStore::open(&store_dir) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("Erro ao abrir store de snapshots: {}", e);
+                    std::process::exit(1);
+                }
+            };
+            match snap_store.list_keys() {
+                Ok(keys) => {
+                    println!("Snapshots armazenados: {}", keys.len());
+                    for k in keys.iter().take(20) {
+                        println!("  - {}", k);
+                    }
+                    if keys.len() > 20 {
+                        println!("  ... e mais {}", keys.len() - 20);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Erro ao listar snapshots: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        "worker-add" => {
+            if args.len() < 3 {
+                eprintln!("Uso: lean-cache worker-add <url>");
+                std::process::exit(1);
+            }
+            let url = &args[2];
+            let mut workers = load_workers();
+            // Evita duplicados.
+            if workers.iter().any(|w| w.url == *url) {
+                println!("Worker ja existe: {}", url);
+                return;
+            }
+            workers.push(WorkerConfig {
+                url: url.clone(),
+                auth_token: None,
+                timeout_secs: 30,
+                max_retries: 3,
+                weight: 1,
+            });
+            if let Err(e) = save_workers(&workers) {
+                eprintln!("Erro ao salvar worker: {}", e);
+                std::process::exit(1);
+            }
+            println!("Worker adicionado: {} (total: {})", url, workers.len());
+        }
+        "worker-list" => {
+            let workers = load_workers();
+            println!("Workers configurados: {}", workers.len());
+            for (i, w) in workers.iter().enumerate() {
+                println!("  {}. {}", i + 1, w.url);
+            }
+        }
+        "worker-build" => {
+            if args.len() < 3 {
+                eprintln!("Uso: lean-cache worker-build <arquivo.raiz.lean>");
+                std::process::exit(1);
+            }
+            let root = Path::new(&args[2]);
+            if !root.is_file() {
+                eprintln!("Erro: arquivo raiz nao encontrado: {}", root.display());
+                std::process::exit(1);
+            }
+
+            let workers = load_workers();
+            if workers.is_empty() {
+                eprintln!("Erro: nenhum worker configurado. Use 'lean-cache worker-add <url>'.");
+                std::process::exit(1);
+            }
+
+            let lake = match find_lake() {
+                Some(l) => l,
+                None => {
+                    eprintln!("Erro: executavel 'lake' nao encontrado no PATH.");
+                    std::process::exit(1);
+                }
+            };
+            let lake = lake.canonicalize().unwrap_or(lake);
+            println!("Usando Lake: {}", lake.display());
+
+            let root_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+            let roots = vec![root_dir.clone()];
+
+            let is_lake_project = root_dir.join("lakefile.toml").is_file()
+                || root_dir.join("lakefile.lean").is_file();
+            if !is_lake_project {
+                eprintln!("Aviso: nenhum lakefile encontrado. Use 'lean-cache worker-build' dentro de um projeto Lake.");
+            }
+
+            let graph = match resolve_import_graph(root, &roots) {
+                Ok(g) => g,
+                Err(e) => {
+                    eprintln!("Erro ao resolver grafo de imports: {}", e);
+                    std::process::exit(1);
+                }
+            };
+
+            if graph.is_empty() {
+                eprintln!("Nenhum modulo encontrado no grafo de imports.");
+                std::process::exit(1);
+            }
+
+            let store = match ContentStore::open(store_dir()) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("Erro ao abrir store: {}", e);
+                    std::process::exit(1);
+                }
+            };
+            let lean_version = match detect_lean_version(&lake) {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!("Erro ao detectar versao do Lean: {}", e);
+                    std::process::exit(1);
+                }
+            };
+
+            let mut module_keys: HashMap<String, String> = HashMap::new();
+            let mut pool = WorkerPool::new();
+            for w in &workers {
+                pool.add_worker(w.clone());
+            }
+
+            println!("Grafo de resolucao: {} modulo(s)", graph.len());
+            println!("Workers disponiveis: {}", pool.len());
+
+            for (module_name, source_path, imports) in &graph {
+                let source_bytes = match fs::read(source_path) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        eprintln!("Erro ao ler {}: {}", source_path.display(), e);
+                        std::process::exit(1);
+                    }
+                };
+
+                let import_keys: Vec<String> = imports
+                    .iter()
+                    .filter_map(|imp| module_keys.get(imp).cloned())
+                    .collect();
+
+                let key = module_key(&source_bytes, &import_keys, &lean_version, &[]);
+                module_keys.insert(module_name.to_string(), key.clone());
+
+                if store.contains(&key) {
+                    println!("[HIT-LOCAL]   {} (chave {})", module_name, &key[..8]);
+                    continue;
+                }
+
+                // Tenta enviar para um worker remoto (round-robin).
+                let mut enviado = false;
+                let mut tentativas = 0;
+                while tentativas < pool.len() {
+                    tentativas += 1;
+                    if let Some(worker) = pool.next() {
+                        let client = RemoteWorkerClient::new(worker.clone());
+                        match client.is_online() {
+                            Ok(true) => {}
+                            Ok(false) => {
+                                eprintln!("Worker offline: {}", worker.url);
+                                continue;
+                            }
+                            Err(e) => {
+                                eprintln!("Erro ao verificar worker {}: {}", worker.url, e);
+                                continue;
+                            }
+                        }
+
+                        let source_text = match fs::read_to_string(source_path) {
+                            Ok(t) => t,
+                            Err(e) => {
+                                eprintln!("Erro ao ler {}: {}", source_path.display(), e);
+                                std::process::exit(1);
+                            }
+                        };
+
+                        let req = BuildRequest {
+                            key: key.clone(),
+                            module_name: module_name.clone(),
+                            source_hash: key.clone(),
+                            import_keys: import_keys.clone(),
+                            lean_version: lean_version.clone(),
+                            flags: Vec::new(),
+                            source_content: source_text,
+                        };
+
+                        match client.request_build(&store, &req) {
+                            Ok(true) => {
+                                println!(
+                                    "[HIT-WORKER] {} via {} (chave {})",
+                                    module_name,
+                                    worker.url,
+                                    &key[..8]
+                                );
+                                enviado = true;
+                                break;
+                            }
+                            Ok(false) => {
+                                eprintln!(
+                                    "Worker {} nao conseguiu buildar {}",
+                                    worker.url, module_name
+                                );
+                                continue;
+                            }
+                            Err(e) => {
+                                eprintln!("Erro com worker {}: {}", worker.url, e);
+                                continue;
+                            }
+                        }
+                    }
+                }
+
+                if !enviado {
+                    println!(
+                        "[MISS]  {} (chave {}) - nenhum worker disponível",
+                        module_name,
+                        &key[..8]
+                    );
+                }
+            }
+
+            println!(
+                "\nConcluído. Verifique o store local para artefatos armazenados pelos workers."
+            );
         }
         _ => {
             eprintln!("Comando desconhecido: {}", comando);

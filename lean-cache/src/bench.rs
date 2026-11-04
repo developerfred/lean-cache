@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
-use crate::store::{ContentStore, module_key};
 use crate::sha256::sha256_hex;
+use crate::store::{module_key, ContentStore};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -27,10 +27,7 @@ pub struct BenchSuite {
 
 impl BenchSuite {
     pub fn novo() -> std::io::Result<Self> {
-        let tmp_dir = std::env::temp_dir().join(format!(
-            "lean-cache-bench-{}",
-            std::process::id()
-        ));
+        let tmp_dir = std::env::temp_dir().join(format!("lean-cache-bench-{}", std::process::id()));
         fs::create_dir_all(&tmp_dir)?;
         let store = ContentStore::open(tmp_dir.join(".lean-cache"))?;
         Ok(Self { tmp_dir, store })
@@ -58,7 +55,11 @@ impl BenchSuite {
     }
 
     /// Cenário 1: build frio (miss em tudo) — gera artefatos e armazena.
-    pub fn build_frio(&mut self, n_modulos: usize, tamanho_fonte: usize) -> std::io::Result<BenchResult> {
+    pub fn build_frio(
+        &mut self,
+        n_modulos: usize,
+        tamanho_fonte: usize,
+    ) -> std::io::Result<BenchResult> {
         let inicio = Instant::now();
         let mut misses = 0usize;
         let mut arquivos = 0usize;
@@ -83,7 +84,12 @@ impl BenchSuite {
                     lean_version: None,
                     flags: Vec::new(),
                     imports: Vec::new(),
-                    artifact_extensions: vec!["olean".to_string(), "ilean".to_string(), "c".to_string(), "o".to_string()],
+                    artifact_extensions: vec![
+                        "olean".to_string(),
+                        "ilean".to_string(),
+                        "c".to_string(),
+                        "o".to_string(),
+                    ],
                     built_at_ns: None,
                     last_accessed_ns: None,
                 },
@@ -105,7 +111,11 @@ impl BenchSuite {
     }
 
     /// Cenário 2: build quente (hit em tudo) — restaura artefatos do cache.
-    pub fn build_quente(&mut self, n_modulos: usize, tamanho_fonte: usize) -> std::io::Result<BenchResult> {
+    pub fn build_quente(
+        &mut self,
+        n_modulos: usize,
+        tamanho_fonte: usize,
+    ) -> std::io::Result<BenchResult> {
         let inicio = Instant::now();
         let mut hits = 0usize;
         let mut arquivos = 0usize;
@@ -141,7 +151,11 @@ impl BenchSuite {
     }
 
     /// Cenário 3: hash puro — mede quanto tempo leva só o SHA-256 sem I/O de artefatos.
-    pub fn hash_puro(&self, n_arquivos: usize, tamanho_bytes: usize) -> std::io::Result<BenchResult> {
+    pub fn hash_puro(
+        &self,
+        n_arquivos: usize,
+        tamanho_bytes: usize,
+    ) -> std::io::Result<BenchResult> {
         let inicio = Instant::now();
         let mut arquivos = 0usize;
 
@@ -164,7 +178,12 @@ impl BenchSuite {
     }
 
     /// Cenário 4: hit parcial (alguns módulos mudam).
-    pub fn hit_parcial(&mut self, n_modulos: usize, n_mudados: usize, tamanho_fonte: usize) -> std::io::Result<BenchResult> {
+    pub fn hit_parcial(
+        &mut self,
+        n_modulos: usize,
+        n_mudados: usize,
+        tamanho_fonte: usize,
+    ) -> std::io::Result<BenchResult> {
         let inicio = Instant::now();
         let mut hits = 0usize;
         let mut misses = 0usize;
@@ -183,7 +202,8 @@ impl BenchSuite {
 
         // Agora, simula que n_mudados mudaram: regenera fonte -> nova chave -> miss.
         for i in 0..n_mudados {
-            let fonte = self.gerar_fonte_falsa(&format!("parcial_mudado_{}.lean", i), tamanho_fonte)?;
+            let fonte =
+                self.gerar_fonte_falsa(&format!("parcial_mudado_{}.lean", i), tamanho_fonte)?;
             let dados = fs::read(&fonte)?;
             let chave = module_key(&dados, &[], &None, &[]);
             let artefatos = self.gerar_artefatos_falsos(&fonte)?;
@@ -230,9 +250,14 @@ impl Default for BenchSuite {
 pub fn imprimir_resultado(r: &BenchResult) {
     let micros = r.duracao.as_micros();
     let millis = r.duracao.as_millis();
-    println!("  {}: {:?} ({} ms, {} micros)", r.nome, r.duracao, millis, micros);
-    println!("    hits={} misses={} arquivos={} store={} bytes",
-        r.hits, r.misses, r.arquivos_processados, r.tamanho_store_bytes);
+    println!(
+        "  {}: {:?} ({} ms, {} micros)",
+        r.nome, r.duracao, millis, micros
+    );
+    println!(
+        "    hits={} misses={} arquivos={} store={} bytes",
+        r.hits, r.misses, r.arquivos_processados, r.tamanho_store_bytes
+    );
 }
 
 /// Executa a suíte completa e imprime um relatório comparativo.

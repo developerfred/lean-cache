@@ -11,14 +11,15 @@
 /// - Builds incrementais no CI (restaurar snapshot do build anterior)
 /// - Desenvolvimento interativo (reutilizar estado de elaboração entre edições)
 /// - Workers remotos (compartilhar estado de elaboração entre máquinas)
-
 use crate::sha256::sha256_hex;
 use crate::store::validate_cache_key;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use std::fs;
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
 /// Um snapshot do estado de elaboração do Lean para um módulo específico.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -100,7 +101,10 @@ impl SnapshotStore {
     pub fn snapshot_path_for(&self, key: &str) -> PathBuf {
         validate_cache_key(key).expect("chave de snapshot inválida");
         let prefix = &key[..2.min(key.len())];
-        self.store_dir.join("snapshots").join(prefix).join(format!("{}.json", key))
+        self.store_dir
+            .join("snapshots")
+            .join(prefix)
+            .join(format!("{}.json", key))
     }
 
     /// Retorna true se o snapshot já existe.
@@ -115,7 +119,10 @@ impl SnapshotStore {
             fs::create_dir_all(parent)?;
         }
         let json = snapshot.to_json().map_err(|e| {
-            std::io::Error::new(std::io::ErrorKind::InvalidInput, format!("serialização falhou: {}", e))
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("serialização falhou: {}", e),
+            )
         })?;
         fs::write(&path, json)?;
         Ok(())
@@ -159,7 +166,9 @@ impl SnapshotStore {
                         let key_entry = key_entry?;
                         if key_entry.path().is_file() {
                             if let Some(name) = key_entry.path().file_name() {
-                                if let Some(stem) = name.to_str().and_then(|s| s.strip_suffix(".json")) {
+                                if let Some(stem) =
+                                    name.to_str().and_then(|s| s.strip_suffix(".json"))
+                                {
                                     keys.push(stem.to_string());
                                 }
                             }
@@ -192,11 +201,7 @@ impl SnapshotStore {
 }
 
 /// Calcula a chave de um snapshot baseado no módulo + hash do fonte + versão do Lean.
-pub fn snapshot_key(
-    module_name: &str,
-    source_hash: &str,
-    lean_version: &str,
-) -> String {
+pub fn snapshot_key(module_name: &str, source_hash: &str, lean_version: &str) -> String {
     let input = format!("{}:{}:{}", module_name, source_hash, lean_version);
     sha256_hex(input.as_bytes())
 }
@@ -221,14 +226,192 @@ pub fn run_lean_server_command(args: &[&str]) -> std::io::Result<(i32, String, S
         std::io::Error::new(std::io::ErrorKind::NotFound, "lean não encontrado no PATH")
     })?;
     let mut cmd = Command::new(&lean);
-    cmd.args(args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
     let output = cmd.output()?;
     let status = output.status.code().unwrap_or(-1);
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
     Ok((status, stdout, stderr))
+}
+
+/// Servidor Lean ativo para captura de estado de elaboração.
+///
+/// Gerencia um processo `lean --server` e se comunica via protocolo JSON-RPC
+/// sobre stdin/stdout (formato Content-Length, semelhante ao LSP).
+pub struct LeanServer {
+    pub child: Child,
+    pub stdin: ChildStdin,
+    pub stdout: BufReader<ChildStdout>,
+    next_id: u32,
+}
+
+impl LeanServer {
+    /// Inicia um novo processo `lean --server`.
+    pub fn new() -> std::io::Result<Self> {
+        let lean = find_lean_server().ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::NotFound, "lean não encontrado no PATH")
+        })?;
+
+        let mut child = Command::new(&lean)
+            .arg("--server")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+
+        let stdin = child.stdin.take().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "não foi obter stdin do lean --server",
+            )
+        })?;
+        let stdout = BufReader::new(child.stdout.take().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "não foi obter stdout do lean --server",
+            )
+        })?);
+
+        Ok(Self {
+            child,
+            stdin,
+            stdout,
+            next_id: 0,
+        })
+    }
+
+    /// Envia uma requisição JSON-RPC e aguarda a resposta.
+    fn send_request(&mut self, method: &str, params: Value) -> std::io::Result<Value> {
+        self.next_id += 1;
+        let id = self.next_id;
+        let request = json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": method,
+            "params": params,
+        });
+
+        let body = serde_json::to_string(&request)?;
+        let header = format!("Content-Length: {}\r\n\r\n", body.len());
+        self.stdin.write_all(header.as_bytes())?;
+        self.stdin.write_all(body.as_bytes())?;
+        self.stdin.flush()?;
+
+        self.read_response(id)
+    }
+
+    /// Lê uma resposta JSON-RPC do stdout.
+    fn read_response(&mut self, expected_id: u32) -> std::io::Result<Value> {
+        loop {
+            // Lê o cabeçalho Content-Length
+            let mut content_length = None;
+            let mut line = String::new();
+            loop {
+                line.clear();
+                let bytes_read = self.stdout.read_line(&mut line)?;
+                if bytes_read == 0 {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::UnexpectedEof,
+                        "lean --server fechou a conexão",
+                    ));
+                }
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    // Linha vazia = fim do cabeçalho
+                    break;
+                }
+                if let Some(len) = trimmed.strip_prefix("Content-Length: ") {
+                    content_length = Some(len.trim().parse::<usize>().map_err(|_| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "Content-Length inválido",
+                        )
+                    })?);
+                }
+            }
+
+            let len = content_length.ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "Content-Length não encontrado no cabeçalho",
+                )
+            })?;
+
+            // Lê o corpo JSON
+            let mut body = vec![0u8; len];
+            self.stdout.read_exact(&mut body)?;
+            let response: Value = serde_json::from_slice(&body)?;
+
+            let resp_id = response["id"].as_u64().unwrap_or(0);
+            if resp_id == expected_id as u64 {
+                if let Some(error) = response.get("error") {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        format!("erro do lean --server: {}", error),
+                    ));
+                }
+                return Ok(response["result"].clone());
+            }
+            // Resposta para outro ID, ignora e continua lendo.
+        }
+    }
+
+    /// Captura o estado de elaboração de um arquivo Lean.
+    /// Retorna o conteúdo do estado (ou None se não suportado).
+    pub fn capture_elaboration_state(
+        &mut self,
+        file_path: &Path,
+    ) -> std::io::Result<Option<Vec<u8>>> {
+        let file_str = file_path.to_string_lossy().to_string();
+
+        // Tenta usar o método 'textDocument/didOpen' para abrir o arquivo
+        let _ = self.send_request(
+            "textDocument/didOpen",
+            json!({
+                "textDocument": {
+                    "uri": format!("file://{}", file_str),
+                    "languageId": "lean",
+                    "version": 1,
+                    "text": std::fs::read_to_string(file_path).unwrap_or_default(),
+                }
+            }),
+        );
+
+        // Tenta obter o estado de elaboração via método específico do Lean
+        match self.send_request(
+            "lean/getElaborationState",
+            json!({
+                "file": file_str,
+            }),
+        ) {
+            Ok(result) => {
+                let state_json = serde_json::to_string(&result)?;
+                Ok(Some(state_json.into_bytes()))
+            }
+            Err(e) => {
+                // Se o método não for suportado, retorna None
+                eprintln!(
+                    "Aviso: lean --server não suporta getElaborationState: {}",
+                    e
+                );
+                Ok(None)
+            }
+        }
+    }
+
+    /// Fecha o servidor Lean.
+    pub fn close(mut self) -> std::io::Result<()> {
+        let _ = self.send_request("shutdown", json!(null));
+        let _ = self.send_request("exit", json!(null));
+        self.child.wait()?;
+        Ok(())
+    }
+}
+
+impl Drop for LeanServer {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+    }
 }
 
 #[cfg(test)]

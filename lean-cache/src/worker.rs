@@ -11,7 +11,6 @@
 ///   GET  /keys    - lista chaves disponíveis no worker
 ///   GET  /status  - verifica se o worker está online
 ///   POST /store   - recebe artefatos para armazenar no worker
-
 use crate::store::{validate_cache_key, ContentStore};
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
@@ -139,20 +138,12 @@ impl RemoteWorkerClient {
     /// Executa um curl com argumentos e retorna (exit_status, stdout, stderr).
     fn curl(&self, args: &[&str]) -> std::io::Result<(i32, String, String)> {
         let mut cmd = Command::new("curl");
-        cmd.args(args)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        cmd.arg(format!(
-            "--connect-timeout={}",
-            self.config.timeout_secs
-        ))
-        .arg(format!(
-            "--max-time={}",
-            self.config.timeout_secs
-        ))
-        .arg("--fail-with-body")
-        .arg("--silent")
-        .arg("--show-error");
+        cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
+        cmd.arg(format!("--connect-timeout={}", self.config.timeout_secs))
+            .arg(format!("--max-time={}", self.config.timeout_secs))
+            .arg("--fail-with-body")
+            .arg("--silent")
+            .arg("--show-error");
 
         for h in self.headers() {
             cmd.arg("-H").arg(h.as_str());
@@ -186,11 +177,7 @@ impl RemoteWorkerClient {
 
     /// Envia uma tarefa de build para o worker e aguarda o resultado.
     /// Se o worker retornar sucesso com artefatos, armazena no store local.
-    pub fn request_build(
-        &self,
-        store: &ContentStore,
-        req: &BuildRequest,
-    ) -> std::io::Result<bool> {
+    pub fn request_build(&self, store: &ContentStore, req: &BuildRequest) -> std::io::Result<bool> {
         let url = format!("{}/build", self.config.url.trim_end_matches('/'));
 
         let json = serde_json::to_string(req).map_err(|e| {
@@ -211,7 +198,9 @@ impl RemoteWorkerClient {
         if status != 0 {
             eprintln!(
                 "Worker {} indisponível (curl {}): {}",
-                self.config.url, status, stderr.trim()
+                self.config.url,
+                status,
+                stderr.trim()
             );
             return Ok(false);
         }
@@ -254,7 +243,7 @@ impl RemoteWorkerClient {
 
             // Valida a chave para prevenir path traversal
             validate_cache_key(&req.key)?;
-            let key_dir = store.object_dir_for(&req.key);
+            let key_dir = store.object_dir_for(&req.key)?;
             fs::create_dir_all(&key_dir)?;
 
             // Sanitiza nomes de arquivo para prevenir path traversal
@@ -284,7 +273,7 @@ impl RemoteWorkerClient {
         store: &ContentStore,
         key: &str,
     ) -> std::io::Result<(usize, usize)> {
-        let dir = store.object_dir_for(key);
+        let dir = store.object_dir_for(key)?;
         if !dir.is_dir() {
             return Ok((0, 0));
         }
@@ -305,11 +294,7 @@ impl RemoteWorkerClient {
                 };
 
                 let artifact = ArtifactInfo {
-                    name: path
-                        .file_name()
-                        .unwrap()
-                        .to_string_lossy()
-                        .to_string(),
+                    name: path.file_name().unwrap().to_string_lossy().to_string(),
                     extension: path
                         .extension()
                         .unwrap_or_default()
@@ -339,7 +324,10 @@ impl RemoteWorkerClient {
                 } else {
                     eprintln!(
                         "Aviso: falha ao enviar {} para worker {} (curl {}): {}",
-                        path.display(), self.config.url, status, stderr.trim()
+                        path.display(),
+                        self.config.url,
+                        status,
+                        stderr.trim()
                     );
                     falharam += 1;
                 }
@@ -398,13 +386,19 @@ pub fn base64_encode(data: &[u8]) -> String {
         match chunk.len() {
             3 => {
                 result.push(BASE64_CHARS[(chunk[0] >> 2) as usize] as char);
-                result.push(BASE64_CHARS[((chunk[0] & 0x03) << 4 | (chunk[1] >> 4)) as usize] as char);
-                result.push(BASE64_CHARS[((chunk[1] & 0x0f) << 2 | (chunk[2] >> 6)) as usize] as char);
+                result.push(
+                    BASE64_CHARS[((chunk[0] & 0x03) << 4 | (chunk[1] >> 4)) as usize] as char,
+                );
+                result.push(
+                    BASE64_CHARS[((chunk[1] & 0x0f) << 2 | (chunk[2] >> 6)) as usize] as char,
+                );
                 result.push(BASE64_CHARS[(chunk[2] & 0x3f) as usize] as char);
             }
             2 => {
                 result.push(BASE64_CHARS[(chunk[0] >> 2) as usize] as char);
-                result.push(BASE64_CHARS[((chunk[0] & 0x03) << 4 | (chunk[1] >> 4)) as usize] as char);
+                result.push(
+                    BASE64_CHARS[((chunk[0] & 0x03) << 4 | (chunk[1] >> 4)) as usize] as char,
+                );
                 result.push(BASE64_CHARS[((chunk[1] & 0x0f) << 2) as usize] as char);
                 result.push('=');
             }
@@ -422,37 +416,54 @@ pub fn base64_encode(data: &[u8]) -> String {
 
 pub fn base64_decode(input: &str) -> Result<Vec<u8>, Base64Error> {
     let mut result = Vec::new();
-    let bytes: Vec<u8> = input.bytes().collect();
+    let bytes: Vec<u8> = input
+        .bytes()
+        .filter(|b| *b != b'\n' && *b != b'\r' && *b != b' ')
+        .collect();
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i] == b'=' {
+        // Coleta até 4 caracteres, tratando padding.
+        let mut chunk = Vec::new();
+        for j in 0..4 {
+            if i + j < bytes.len() {
+                chunk.push(bytes[i + j]);
+            } else {
+                break;
+            }
+        }
+        if chunk.is_empty() {
             break;
         }
-        let b0 = pos(bytes[i])?;
-        let b1 = if i + 1 < bytes.len() && bytes[i + 1] != b'=' {
-            pos(bytes[i + 1])?
-        } else {
+        // Preenche com '=' se necessário.
+        while chunk.len() < 4 {
+            chunk.push(b'=');
+        }
+        let c0 = chunk[0];
+        let c1 = chunk[1];
+        let c2 = chunk[2];
+        let c3 = chunk[3];
+
+        if c0 == b'=' {
             break;
-        };
-        let b2 = if i + 2 < bytes.len() && bytes[i + 2] != b'=' {
-            pos(bytes[i + 2])?
-        } else {
-            break;
-        };
-        let b3 = if i + 3 < bytes.len() && bytes[i + 3] != b'=' {
-            pos(bytes[i + 3])?
-        } else {
-            break;
-        };
+        }
+        let b0 = pos(c0)?;
+        let b1 = if c1 == b'=' { 0 } else { pos(c1)? };
+        let b2 = if c2 == b'=' { 0 } else { pos(c2)? };
+        let b3 = if c3 == b'=' { 0 } else { pos(c3)? };
 
         result.push((b0 << 2) | (b1 >> 4));
-        if i + 2 < bytes.len() && bytes[i + 2] != b'=' {
+        if c2 != b'=' {
             result.push(((b1 & 0x0f) << 4) | (b2 >> 2));
         }
-        if i + 3 < bytes.len() && bytes[i + 3] != b'=' {
+        if c3 != b'=' {
             result.push(((b2 & 0x03) << 6) | b3);
         }
         i += 4;
+        if chunk.iter().any(|&b| b == b'=') {
+            // padding encountered; stop
+            // but only break if trailing; standard: break after padded chunk
+            break;
+        }
     }
     Ok(result)
 }

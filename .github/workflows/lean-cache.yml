@@ -11,31 +11,31 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout do repositório
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Instalar Lean 4 via elan
+      - name: Install Lean 4 via elan
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y
           echo "$HOME/.elan/bin" >> $GITHUB_PATH
 
-      - name: Instalar Rust toolchain
+      - name: Install Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: stable
 
-      - name: Compilar lean-cache (offline, std-only)
+      - name: Compile lean-cache (offline, std-only)
         run: |
           cd lean-cache
           cargo build --release
           cp target/release/lean-cache /usr/local/bin/
 
-      - name: Verificar versão do Lean
+      - name: Check Lean version
         run: |
           lean --version
           lake --version
 
-      - name: Build frio (cache vazio)
+      - name: Cold build (empty cache)
         id: cold-build
         run: |
           rm -rf .lean-cache .lake build lake-manifest.json
@@ -46,66 +46,66 @@ jobs:
           lean-cache build Main.lean || lake build
           echo "COLD_END=$(date +%s)" >> $GITHUB_ENV
 
-      - name: Build quente (cache hit)
+      - name: Hot build (cache hit)
         id: hot-build
         run: |
           echo "HOT_START=$(date +%s)" >> $GITHUB_ENV
           lean-cache build Main.lean
           echo "HOT_END=$(date +%s)" >> $GITHUB_ENV
 
-      - name: Calcular speedup
+      - name: Calculate speedup
         run: |
           COLD=$(( ${COLD_END} - ${COLD_START} ))
           HOT=$(( ${HOT_END} - ${HOT_START} ))
-          echo "Build frio: ${COLD}s"
-          echo "Build quente: ${HOT}s"
+          echo "Cold build: ${COLD}s"
+          echo "Hot build: ${HOT}s"
           if [ "$HOT" -gt 0 ]; then
             SPEEDUP=$(echo "scale=2; $COLD / $HOT" | bc)
             echo "Speedup: ${SPEEDUP}x"
           else
-            echo "Speedup: N/A (build quente foi instantâneo)"
+            echo "Speedup: N/A (hot build was instant)"
             SPEEDUP="N/A"
           fi
           echo "speedup=${SPEEDUP}" >> $GITHUB_OUTPUT
         id: speedup
 
-      - name: Enviar cache como artefato do GitHub
+      - name: Upload cache as GitHub artifact
         uses: actions/upload-artifact@v4
         with:
           name: lean-cache-store
           path: .lean-cache/
           retention-days: 7
 
-  # Segundo job simula outra máquina/CI baixando o cache compartilhado
+  # Second job simulates another machine/CI downloading the shared cache
   warm-cache-ci:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout do repositório
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Instalar Lean 4 via elan
+      - name: Install Lean 4 via elan
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y
           echo "$HOME/.elan/bin" >> $GITHUB_PATH
 
-      - name: Instalar Rust toolchain
+      - name: Install Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: stable
 
-      - name: Compilar lean-cache
+      - name: Compile lean-cache
         run: |
           cd lean-cache
           cargo build --release
           cp target/release/lean-cache /usr/local/bin/
 
-      - name: Baixar cache compartilhado
+      - name: Download shared cache
         uses: actions/download-artifact@v4
         with:
           name: lean-cache-store
           path: .lean-cache/
 
-      - name: Build com cache compartilhado (hit remoto)
+      - name: Build with shared cache (remote hit)
         run: |
           lean-cache build Main.lean
