@@ -76,6 +76,29 @@ lean-cache snap-list             # lista snapshots armazenados
 lean-cache bench
 ```
 
+## Variáveis de ambiente
+
+| Variável | Descrição |
+|----------|-----------|
+| `LEAN_CACHE_DIR` | Diretório do store (padrão: `.lean-cache`) |
+| `S3_BUCKET` | Bucket S3 para cache remoto |
+| `S3_REGION` | Região S3 |
+| `S3_ACCESS_KEY` | Access key S3 |
+| `S3_SECRET_KEY` | Secret key S3 |
+| `S3_ENDPOINT` | Endpoint opcional (MinIO/compatível) |
+
+## Comparação com o cache nativo do Lake (Lean ≥ 4.30)
+
+O Lean 4 (a partir de 4.30) possui cache de artefatos nativo (`lake cache get/put`, `LAKE_ARTIFACT_CACHE`).
+O `lean-cache` diferencia-se por:
+
+- Cache endereçável por conteúdo (SHA-256 da fonte + imports + versão + flags), não por revisão Git.
+- Wrapper transparente que pula o `lake build` inteiro em hit total.
+- Suporte a S3/HTTP genérico sem depender de GitHub releases.
+- Edição cirúrgica por declaração e snapshots `lean --server`.
+
+Use o cache nativo do Lake para dependências publicadas (mathlib); use `lean-cache` para acelerar builds locais/CI de projetos próprios.
+
 ## Modelo do store
 
 ```
@@ -163,8 +186,8 @@ Speedup = Tempo frio / Tempo quente
 1. **Wrapper `lake build`**: o `lean-cache build` chama `lake build` para projetos com `lakefile`. Se o projeto tiver problemas de namespace nos arquivos `.lean`, o `lake` falhará — isso é um problema do projeto, não do `lean-cache`.
 2. **Build puro com `lean`**: quando chamado diretamente com `lean <arquivo>`, funciona para arquivos únicos. Para múltiplos arquivos, use o wrapper `lake`.
 3. **Ciclos de imports**: Lean 4 não permite ciclos; o `resolve_import_graph` evita loops infinito.
-4. **Edição cirúrgica**: implementada em `surgical.rs` mas ainda não integrada ao `cmd_build` (integração pendente na Fase 5).
-5. **Snapshots `lean --server`**: implementados em `snapshots.rs` mas ainda não integrados ao protocolo do servidor Lean (integração pendente na Fase 5).
+4. **Edição cirúrgica**: integrada ao `cmd_build` (declarações em miss são armazenadas para reuso); restauração individual por declaração ainda é evolução futura.
+5. **Snapshots `lean --server`**: `snap <arquivo.lean>` tenta capturar o estado real via `lean --server`; fallback para snapshot vazio se indisponível.
 
 ## Segurança
 
@@ -177,6 +200,14 @@ O `lean-cache` implementa as seguintes medidas de segurança:
 - **Arquivos temporários não previsíveis**: usa hash de tempo + PID para evitar symlink attacks
 - **Credenciais redacted**: `Debug` de `S3Config` oculta `access_key` e `secret_key`
 - **Não logar URLs/stderr sensíveis**: erros de rede mostram apenas status code
+
+## Troubleshooting
+
+- **"Comando desconhecido"**: verifique se o binário é o mais recente (`cargo build --release`).
+- **Miss inesperado**: a chave inclui versão do Lean; trocar toolchain invalida o cache.
+- **Falha de integridade no pull**: o pull usa manifesto; re-faça `push` após atualizar artefatos.
+- **S3 não configurado**: defina `S3_BUCKET`, `S3_REGION`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`.
+- **Workers offline**: use `lean-cache worker-list` e re-adicione a URL.
 
 ## Roadmap
 
