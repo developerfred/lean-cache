@@ -12,7 +12,6 @@
 ///
 /// Este é o nível mais fino de granularidade de cache para Lean 4 e traz o
 /// maior ganho para edições locais em arquivos grandes.
-
 use crate::sha256::sha256_hex;
 use crate::store::validate_cache_key;
 use std::fs;
@@ -142,8 +141,15 @@ pub fn extract_declarations(source: &str) -> Vec<LeanDeclaration> {
         let keyword = first_word;
         if matches!(
             keyword,
-            "def" | "theorem" | "lemma" | "structure" | "class" | "instance"
-                | "axiom" | "constant" | "variable"
+            "def"
+                | "theorem"
+                | "lemma"
+                | "structure"
+                | "class"
+                | "instance"
+                | "axiom"
+                | "constant"
+                | "variable"
         ) {
             // Extrai o nome da declaração (segundo token).
             let mut tokens = trimmed.split_whitespace();

@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <title>Documentação — lean-cache</title>
+  <meta name="description" content="Documentação completa do lean-cache: instalação, uso, comandos, arquitetura e exemplos para Lean 4.">
+  <meta name="robots" content="index, follow">
+  <meta name="theme-color" content="#0f172a">
+  <link rel="canonical" href="https://developerfred.github.io/lean-cache/docs.html">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%232563eb'%3E%3Cpath d='M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5-2-18z'/%3E%3C/svg%3E">
+  <meta property="og:title" content="Documentação — lean-cache">
+  <meta property="og:description" content="Documentação completa do lean-cache para builds do Lean 4.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://developerfred.github.io/lean-cache/docs.html">
+
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --bg: #0f172a;
+      --bg-secondary: #1e293b;
+      --text: #f8fafc;
+      --text-secondary: #94a3b8;
+      --accent: #2563eb;
+      --accent-hover: #3b82f6;
+      --radius: 12px;
+    }
+    html { scroll-behavior: smooth; font-size: 16px; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      line-height: 1.6;
+      color: var(--text);
+      background: var(--bg);
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { color: var(--accent-hover); }
+    a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .skip-link {
+      position: absolute; top: -100%; left: 50%; transform: translateX(-50%);
+      background: var(--accent); color: #fff; padding: 0.75rem 1.5rem;
+      border-radius: var(--radius); z-index: 10000; text-decoration: none;
+    }
+    .skip-link:focus { top: 1rem; }
+    header {
+      background: rgba(15, 23, 42, 0.8); backdrop-filter: blur(12px);
+      position: sticky; top: 0; z-index: 100; border-bottom: 1px solid rgba(255,255,255,0.05);
+    }
+    .nav-container {
+      max-width: 1000px; margin: 0 auto; padding: 1rem;
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .logo { font-size: 1.5rem; font-weight: 800; color: #fff; display: flex; align-items: center; gap: 0.5rem; }
+    .nav-links { display: flex; gap: 2rem; list-style: none; }
+    .nav-links a { color: var(--text-secondary); font-weight: 500; }
+    .nav-links a:hover { color: var(--accent); }
+    .hero { padding: 4rem 1rem 2rem; text-align: center; max-width: 800px; margin: 0 auto; }
+    .hero h1 { font-size: 2.5rem; margin-bottom: 1rem; color: #fff; font-weight: 800; }
+    .hero p { color: var(--text-secondary); font-size: 1.1rem; max-width: 600px; margin: 0 auto 2rem; }
+    .container { max-width: 900px; margin: 3rem auto; padding: 0 1rem; }
+    .doc-section { margin-bottom: 4rem; }
+    .doc-section h2 { font-size: 1.5rem; margin-bottom: 1rem; color: #fff; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 0.5rem; }
+    .doc-section h3 { font-size: 1.2rem; margin: 1.5rem 0 0.5rem; color: #cbd5e1; }
+    .doc-section p { color: var(--text-secondary); margin-bottom: 1rem; }
+    code { background: rgba(255,255,255,0.05); padding: 0.2rem 0.4rem; border-radius: 4px; font-family: monospace; font-size: 0.9em; }
+    pre { background: #000; color: #0f0; padding: 1rem; border-radius: var(--radius); font-family: monospace; font-size: 0.9rem; overflow-x: auto; margin: 1rem 0; }
+    .command { background: #000; color: #0f0; padding: 1rem; border-radius: var(--radius); font-family: monospace; font-size: 0.9rem; margin: 1rem 0; }
+    table { width: 100%; border-collapse: collapse; margin: 1.5rem 0; font-size: 0.95rem; }
+    th, td { padding: 0.75rem; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.06); }
+    th { background: rgba(255,255,255,0.03); font-weight: 600; color: #cbd5e1; }
+    .badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 6px; font-size: 0.75rem; font-weight: 600; }
+    .badge-green { background: rgba(16, 185, 129, 0.15); color: #10b981; }
+    .btn { display: inline-block; background: var(--accent); color: #fff; padding: 0.75rem 1.5rem; border-radius: var(--radius); text-decoration: none; font-weight: 600; margin-right: 0.5rem; }
+    .btn:hover { background: var(--accent-hover); }
+    .btn-secondary { background: rgba(255,255,255,0.1); }
+    .btn-secondary:hover { background: rgba(255,255,255,0.2); }
+    footer { background: #020617; color: var(--text-secondary); padding: 3rem 1rem; text-align: center; border-top: 1px solid rgba(255,255,255,0.05); margin-top: 3rem; }
+    footer p { margin: 0.5rem 0; font-size: 0.9rem; }
+    @media (max-width: 640px) { .nav-links { gap: 1rem; font-size: 0.85rem; } }
+  </style>
+</head>
+<body>
+  <a href="#content" class="skip-link">Pular para o conteúdo principal</a>
+
+  <header>
+    <div class="nav-container">
+      <div class="logo">lean-cache</div>
+      <ul class="nav-links">
+        <li><a href="index.html">Início</a></li>
+        <li><a href="docs.html">Documentação</a></li>
+        <li><a href="https://github.com/developerfred/lean-cache" target="_blank" rel="noopener">GitHub</a></li>
+      </ul>
+    </div>
+  </header>
+
+  <main id="content">
+    <section class="hero">
+      <h1>Documentação</h1>
+      <p>Guia completo para instalar, configurar e usar o <strong>lean-cache</strong> com Lean 4.</p>
+    </section>
+
+    <div class="container">
+      <section class="doc-section" id="instalacao">
+        <h2>1. Instalação</h2>
+        <p>O <code>lean-cache</code> é escrito em Rust e compila com zero dependências externas (std-only).</p>
+        <div class="command">
+$ git clone https://github.com/developerfred/lean-cache.git
+$ cd lean-cache/lean-cache
+$ cargo build --release
+$ cp target/release/lean-cache /usr/local/bin/
+        </div>
+        <p>Requisitos: Rust toolchain, <code>curl</code> (para cache remoto), <code>gzip</code> (opcional, para compressão), <code>lake</code> e <code>lean</code> (via elan).</p>
+      </section>
+
+      <section class="doc-section" id="inicializacao">
+        <h2>2. Inicialização</h2>
+        <p>Dentro de um projeto Lake (com <code>lakefile.toml</code> ou <code>lakefile.lean</code>):</p>
+        <div class="command">
+lean-cache init
+        </div>
+        <p>Isso cria o diretório <code>.lean-cache/</code> com a estrutura de store de objetos.</p>
+      </section>
+
+      <section class="doc-section" id="build">
+        <h2>3. Build Acelerado</h2>
+        <p>O comando <code>build</code> resolve o grafo de imports, calcula chaves de conteúdo e decide se pula o <code>lake build</code>:</p>
+        <div class="command">
+lean-cache build MeuArquivo.lean
+        </div>
+        <p>Se todos os módulos estão em cache hit, o <code>lake build</code> é pulado e os artefatos são restaurados diretamente em <code>.lake/build/lib/lean/</code>.</p>
+      </section>
+
+      <section class="doc-section" id="comandos">
+        <h2>4. Referência de Comandos</h2>
+        <table>
+          <thead><tr><th>Comando</th><th>Descrição</th></tr></thead>
+          <tbody>
+            <tr><td><code>init</code></td><td>Inicializa o store de cache (.lean-cache)</td></tr>
+            <tr><td><code>hash &lt;arquivo&gt;</code></td><td>Calcula a chave SHA-256 de um módulo Lean</td></tr>
+            <tr><td><code>store &lt;chave&gt; &lt;dir&gt;</code></td><td>Armazena artefatos de um diretório sob uma chave</td></tr>
+            <tr><td><code>get &lt;chave&gt; &lt;dir&gt;</code></td><td>Restaura artefatos de uma chave para um diretório</td></tr>
+            <tr><td><code>build &lt;arquivo&gt;</code></td><td>Build acelerado: usa cache ou executa lake build</td></tr>
+            <tr><td><code>status</code></td><td>Mostra estatísticas do store local</td></tr>
+            <tr><td><code>clean</code></td><td>Remove o store de cache local</td></tr>
+            <tr><td><code>gc</code></td><td>Garbage collection LRU (remove entradas menos acessadas)</td></tr>
+            <tr><td><code>remote-set &lt;url&gt;</code></td><td>Define URL base do cache remoto HTTP</td></tr>
+            <tr><td><code>push &lt;chave&gt;</code></td><td>Envia artefatos de uma chave para o remoto</td></tr>
+            <tr><td><code>pull &lt;chave&gt;</code></td><td>Baixa artefatos de uma chave do remoto</td></tr>
+            <tr><td><code>sync</code></td><td>Sincroniza chaves locais para o remoto</td></tr>
+            <tr><td><code>s3-push &lt;chave&gt;</code></td><td>Envia artefatos para S3 (assinatura AWS v4)</td></tr>
+            <tr><td><code>s3-pull &lt;chave&gt;</code></td><td>Baixa artefatos do S3</td></tr>
+            <tr><td><code>s3-sync</code></td><td>Sincroniza chaves locais para o S3</td></tr>
+            <tr><td><code>snap &lt;chave&gt;</code></td><td>Salva snapshot de elaboração de um módulo</td></tr>
+            <tr><td><code>snap-load &lt;chave&gt;</code></td><td>Restaura snapshot de elaboração</td></tr>
+            <tr><td><code>snap-list</code></td><td>Lista snapshots armazenados</td></tr>
+            <tr><td><code>surgical-list &lt;arquivo&gt;</code></td><td>Lista declarações cirúrgicas de um arquivo</td></tr>
+            <tr><td><code>surgical-store &lt;arquivo&gt;</code></td><td>Armazena declarações cirúrgicas no cache</td></tr>
+            <tr><td><code>surgical-get &lt;arquivo&gt; &lt;destino&gt;</code></td><td>Restaura declarações cirúrgicas do cache</td></tr>
+            <tr><td><code>bench</code></td><td>Executa suite de benchmark simulado</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section class="doc-section" id="arquitetura">
+        <h2>5. Arquitetura</h2>
+        <p>O modelo de endereçamento é baseado em Content-Addressable Storage (CAS):</p>
+        <div class="command">
+chave = SHA-256(fonte + chaves_dos_imports + versao_Lean + flags)
+caminho = .lean-cache/objects/&lt;chave[0:2]&gt;/&lt;chave&gt;/
+        </div>
+        <ul>
+          <li><strong>SHA-256 puro:</code> implementado do zero em Rust, sem dependências externas</li>
+          <li><strong>Compressão condicional:</strong> arquivos ≥64 KB são comprimidos com zstd/lz4/gzip</li>
+          <li><strong>Hard-link:</strong> restauração evita cópia de disco quando possível</li>
+          <li><strong>Evicção LRU:</strong> comando <code>cache gc</code> remove entradas menos acessadas</li>
+          <li><strong>Fallback local:</strong> se o remoto falhar, o build continua localmente</li>
+          <li><strong>Integridade:</strong> SHA-256 verificado após download do remoto</li>
+        </ul>
+      </section>
+
+      <section class="doc-section" id="exemplos">
+        <h2>6. Exemplos de Uso</h2>
+        <h3>Build inicial</h3>
+        <div class="command">
+lean-cache init
+lean-cache build src/Main.lean
+        </div>
+        <h3>Build após edição (quente)</h3>
+        <div class="command">
+# Edite src/Modulo.lean
+lean-cache build src/Main.lean
+        </div>
+        <p>Se apenas <code>Modulo.lean</code> mudou, apenas esse módulo é recompilado; o resto é restaurado do cache.</p>
+        <h3>Cache remoto HTTP</h3>
+        <div class="command">
+lean-cache remote-set https://cache.suaempresa.com
+lean-cache push &lt;chave&gt;
+lean-cache pull &lt;chave&gt;
+        </div>
+        <h3>Cache remoto S3</h3>
+        <div class="command">
+lean-cache s3-push &lt;chave&gt;
+lean-cache s3-pull &lt;chave&gt;
+        </div>
+      </section>
+
+      <section class="doc-section" id="benchmark">
+        <h2>7. Benchmarks</h2>
+        <table>
+          <thead><tr><th>Projeto</th><th>Módulos</th><th>Frio</th><th>Quente</th><th>Speedup</th></tr></thead>
+          <tbody>
+            <tr><td>lean-test-proj</td><td>6</td><td>~11.5s</td><td>~0.29s</td><td><span class="badge badge-green">~40×</span></td></tr>
+            <tr><td>droidsaw-lean</td><td>8</td><td>~164s</td><td>~6.9s</td><td><span class="badge badge-green">~24×</span></td></tr>
+          </tbody>
+        </table>
+        <p>Ambiente: macOS ARM64, Lean 4.35.0 via elan.</p>
+      </section>
+
+      <section class="doc-section" id="seguranca">
+        <h2>8. Segurança</h2>
+        <ul>
+          <li>Validação de chave de cache (rejeita path traversal)</li>
+          <li>Validação de chave S3 e URL (SSRF protection)</li>
+          <li>Validação de nome de módulo Lean</li>
+          <li>Arquivos temporários com nomes não previsíveis</li>
+          <li>Credenciais S3 redacted em logs</li>
+          <li>Erros de rede não expõem URLs ou credenciais</li>
+        </ul>
+      </section>
+
+      <section class="doc-section" id="contato">
+        <h2>9. Contato e Suporte</h2>
+        <p><strong>Desenvolvedor:</strong> codingsh</p>
+        <p><strong>Email:</strong> <a href="mailto:codingsh@pm.me">codingsh@pm.me</a></p>
+        <p><strong>X/Twitter:</strong> <a href="https://x.com/codingsh" target="_blank" rel="noopener">@codingsh</a></p>
+        <p><strong>GitHub:</strong> <a href="https://github.com/developerfred/lean-cache" target="_blank" rel="noopener">github.com/developerfred/lean-cache</a></p>
+        <p><strong>Licença:</strong> MIT</p>
+      </section>
+    </div>
+
+    <footer>
+      <p><strong>lean-cache</strong> — Acelerando builds do Lean 4</p>
+      <p>Desenvolvido por codingsh (codingsh@pm.me · x.com/codingsh) · MIT License</p>
+    </footer>
+  </main>
+</body>
+</html>

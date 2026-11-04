@@ -12,7 +12,6 @@
 /// - Chaves de objeto S3 são validadas para prevenir path traversal.
 /// - Arquivos temporários usam nomes aleatórios (não previsíveis).
 /// - URLs são validadas antes de serem passadas ao curl.
-
 use chrono::{DateTime, Utc};
 use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
@@ -72,8 +71,7 @@ fn sha256_hex_bytes(data: &[u8]) -> String {
 
 /// HMAC-SHA256. Retorna o digest como vetor de bytes.
 fn hmac_sha256(key: &[u8], data: &[u8]) -> Vec<u8> {
-    let mut mac = HmacSha256::new_from_slice(key)
-        .expect("HMAC accepts keys of any size");
+    let mut mac = HmacSha256::new_from_slice(key).expect("HMAC accepts keys of any size");
     mac.update(data);
     mac.finalize().into_bytes().to_vec()
 }
@@ -194,8 +192,7 @@ fn sign_request(
             datetime, credential_scope, canonical_hash
         );
 
-        let signing_key =
-            derive_signing_key(&config.secret_key, &date, &config.region, "s3");
+        let signing_key = derive_signing_key(&config.secret_key, &date, &config.region, "s3");
         let signature = hmac_sha256(&signing_key, string_to_sign.as_bytes());
         let signature_hex = hex::encode(signature);
 
@@ -341,10 +338,7 @@ impl S3Client {
         let mut args = Vec::new();
         args.push("-o");
         args.push(local_path.to_str().ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "caminho local inválido",
-            )
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "caminho local inválido")
         })?);
         args.push("--create-dirs");
         let header_args: Vec<String> = headers
@@ -418,7 +412,7 @@ pub fn push_key_to_s3(
     client: &S3Client,
     key: &str,
 ) -> std::io::Result<(usize, usize)> {
-    let dir = store.object_dir_for(key);
+    let dir = store.object_dir_for(key)?;
     if !dir.is_dir() {
         return Ok((0, 0));
     }
@@ -463,7 +457,7 @@ pub fn pull_key_from_s3(
 
     for ext in crate::store::ARTIFACT_EXTENSIONS {
         let s3_key = format!("objects/{}/{}.{}", key, key, ext);
-        let dest = store.object_dir_for(key).join(format!("{}.{}", key, ext));
+        let dest = store.object_dir_for(key)?.join(format!("{}.{}", key, ext));
         match client.download_file(&s3_key, &dest) {
             Ok(true) => baixados += 1,
             Ok(false) => falharam += 1,

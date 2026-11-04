@@ -1,0 +1,19 @@
+# Compiled output
+target/
+
+# Lean cache store
+.lean-cache/
+
+# Lean build artifacts
+.lake/
+lake-manifest.json
+*.olean
+*.ilean
+
+# Editor/OS
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store

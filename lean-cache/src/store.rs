@@ -42,12 +42,10 @@ pub fn validate_cache_key(key: &str) -> std::io::Result<()> {
 }
 
 /// Artefatos produzidos por um módulo Lean (facetas do Lake).
-#[allow(dead_code)]
 pub const ARTIFACT_EXTENSIONS: &[&str] = &["olean", "ilean", "c", "o"];
 
 /// Configuração do store de cache.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct CacheConfig {
     pub lean_version: Option<String>,
     pub default_flags: Vec<String>,
@@ -79,9 +77,7 @@ impl Default for CacheConfig {
 
 /// O store endereçável por conteúdo. Artefatos são guardados em
 /// `<store_dir>/objects/<chave[0:2]>/<chave>/`.
-#[allow(dead_code)]
 pub struct ContentStore {
-    #[allow(dead_code)]
     pub config: CacheConfig,
     pub objects_root: PathBuf,
 }
@@ -112,23 +108,25 @@ impl ContentStore {
     }
 
     /// Caminho da pasta de objetos para uma chave.
-    pub fn object_dir_for(&self, key: &str) -> PathBuf {
-        validate_cache_key(key).expect("chave de cache inválida");
+    /// Retorna erro se a chave contiver caracteres perigosos (path traversal).
+    pub fn object_dir_for(&self, key: &str) -> std::io::Result<PathBuf> {
+        validate_cache_key(key)?;
         let prefix = &key[..2.min(key.len())];
-        self.objects_root.join(prefix).join(key)
+        Ok(self.objects_root.join(prefix).join(key))
     }
 
     /// Retorna true se a chave já possui artefatos no store.
     pub fn contains(&self, key: &str) -> bool {
-        let dir = self.object_dir_for(key);
-        dir.is_dir()
+        self.object_dir_for(key)
+            .map(|d| d.is_dir())
+            .unwrap_or(false)
     }
 
     /// Armazena um conjunto de artefatos (caminhos de arquivo) sob uma chave.
     /// Cada artefato é comprimido com o algoritmo configurado (se acima de compress_min_bytes)
     /// e salvo como `<object_dir>/<nome><ext>`. Arquivos pequenos são armazenados cru.
     pub fn store(&self, key: &str, artifacts: &[PathBuf]) -> std::io::Result<()> {
-        let dir = self.object_dir_for(key);
+        let dir = self.object_dir_for(key)?;
         fs::create_dir_all(&dir)?;
         let use_compression = self.config.compression != CompressionAlgorithm::None;
         for artifact in artifacts {
@@ -140,7 +138,8 @@ impl ContentStore {
                     })?
                     .to_os_string();
                 let meta = fs::metadata(artifact)?;
-                let should_compress = use_compression && meta.len() >= self.config.compress_min_bytes;
+                let should_compress =
+                    use_compression && meta.len() >= self.config.compress_min_bytes;
                 let dest = if should_compress {
                     dir.join(format!(
                         "{}{}",
@@ -164,32 +163,46 @@ impl ContentStore {
     /// Retorna a lista de arquivos restaurados.
     /// Usa hard-link (quando disponível e habilitado) para evitar cópia de disco.
     pub fn restore(&self, key: &str, dest_dir: &Path) -> std::io::Result<Vec<PathBuf>> {
-        let dir = self.object_dir_for(key);
+        let dir = self.object_dir_for(key)?;
         if !dir.is_dir() {
             return Ok(Vec::new());
         }
-        fs::create_dir_all(dest_dir)?;
+        // Sanitiza dest_dir para prevenir path traversal
+        let dest_dir = dest_dir
+            .canonicalize()
+            .unwrap_or_else(|_| dest_dir.to_path_buf());
+        fs::create_dir_all(&dest_dir)?;
         let mut restored = Vec::new();
         let compression = self.config.compression;
         for entry in fs::read_dir(dir)? {
             let entry = entry?;
             let path = entry.path();
             if path.is_file() {
-                let file_name = path.file_name().unwrap().to_os_string();
-                let name_str = file_name.to_string_lossy().to_string();
+                let file_name = path
+                    .file_name()
+                    .ok_or_else(|| {
+                        std::io::Error::new(std::io::ErrorKind::InvalidInput, "sem nome de arquivo")
+                    })?
+                    .to_string_lossy()
+                    .to_string();
+                // Sanitiza nome de arquivo para prevenir path traversal
+                let safe_name = file_name
+                    .replace(['/', '\\'], "_")
+                    .replace("..", "_");
+                let name_str = safe_name.as_str();
                 // Detecta se o arquivo está comprimido pela extensão do algoritmo configurado.
                 if compression != CompressionAlgorithm::None
                     && name_str.ends_with(compression.extension())
                 {
                     let original_name = name_str
                         .strip_suffix(compression.extension())
-                        .unwrap_or(&name_str);
+                        .unwrap_or(name_str);
                     let dest = dest_dir.join(original_name);
                     decompress_file(&path, &dest, compression)?;
                     restored.push(dest);
                 } else if self.config.hard_link_on_restore {
                     // Tenta hard-link para evitar cópia de disco.
-                    let dest = dest_dir.join(&file_name);
+                    let dest = dest_dir.join(&safe_name);
                     if std::fs::hard_link(&path, &dest).is_ok() {
                         restored.push(dest);
                     } else {
@@ -198,7 +211,7 @@ impl ContentStore {
                         restored.push(dest);
                     }
                 } else {
-                    let dest = dest_dir.join(file_name);
+                    let dest = dest_dir.join(&safe_name);
                     fs::copy(&path, &dest)?;
                     restored.push(dest);
                 }
@@ -210,7 +223,7 @@ impl ContentStore {
     /// Remove uma chave do store.
     #[allow(dead_code)]
     pub fn remove(&self, key: &str) -> std::io::Result<bool> {
-        let dir = self.object_dir_for(key);
+        let dir = self.object_dir_for(key)?;
         if dir.is_dir() {
             fs::remove_dir_all(dir)?;
             Ok(true)
@@ -329,7 +342,7 @@ impl ContentStore {
     /// Tamanho em bytes de uma chave específica.
     fn key_size_bytes(&self, key: &str) -> std::io::Result<u64> {
         let mut total = 0u64;
-        let dir = self.object_dir_for(key);
+        let dir = self.object_dir_for(key)?;
         if dir.is_dir() {
             for entry in fs::read_dir(dir)? {
                 let entry = entry?;
@@ -342,14 +355,23 @@ impl ContentStore {
     }
 
     /// Salva o trace associado a uma chave (formato texto simples, linha a linha).
+    /// Sanitiza source_file para não expor caminhos absolutos do sistema.
     pub fn save_trace(&self, key: &str, trace: &TraceRecord) -> std::io::Result<()> {
-        let dir = self.object_dir_for(key);
+        let dir = self.object_dir_for(key)?;
         fs::create_dir_all(&dir)?;
         let mut lines = Vec::new();
         lines.push(format!("module:{}", trace.module));
-        lines.push(format!("source_file:{}", trace.source_file));
+        // Sanitiza source_file para evitar expor caminhos absolutos do sistema
+        let safe_source = trace
+            .source_file
+            .replace(['/', '\\'], "_")
+            .replace("..", "_");
+        lines.push(format!("source_file:{}", safe_source));
         lines.push(format!("key:{}", trace.key));
-        lines.push(format!("lean_version:{}", trace.lean_version.clone().unwrap_or_default()));
+        lines.push(format!(
+            "lean_version:{}",
+            trace.lean_version.clone().unwrap_or_default()
+        ));
         lines.push(format!("flags:{}", trace.flags.join("\u{1f}")));
         lines.push(format!("imports:{}", trace.imports.join(",")));
         if let Some(ns) = trace.built_at_ns {
@@ -364,7 +386,8 @@ impl ContentStore {
     /// Lê o trace de uma chave, se existir.
     #[allow(dead_code)]
     pub fn load_trace(&self, key: &str) -> std::io::Result<Option<TraceRecord>> {
-        let path = self.object_dir_for(key).join("trace.txt");
+        let dir = self.object_dir_for(key)?;
+        let path = dir.join("trace.txt");
         if path.is_file() {
             let data = fs::read_to_string(&path)?;
             Ok(Some(TraceRecord::from_text(&data)?))
@@ -376,7 +399,6 @@ impl ContentStore {
 
 /// Registro de trace de um módulo Lean. O que determina se o módulo precisa ser recompilado.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct TraceRecord {
     pub module: String,
     pub source_file: String,
@@ -409,14 +431,26 @@ impl TraceRecord {
             } else if let Some(rest) = line.strip_prefix("key:") {
                 key = rest.to_string();
             } else if let Some(rest) = line.strip_prefix("lean_version:") {
-                lean_version = if rest.is_empty() { None } else { Some(rest.to_string()) };
+                lean_version = if rest.is_empty() {
+                    None
+                } else {
+                    Some(rest.to_string())
+                };
             } else if let Some(rest) = line.strip_prefix("flags:") {
                 if !rest.is_empty() {
-                    flags = rest.split('\u{1f}').filter(|s| !s.is_empty()).map(|s| s.to_string()).collect();
+                    flags = rest
+                        .split('\u{1f}')
+                        .filter(|s| !s.is_empty())
+                        .map(|s| s.to_string())
+                        .collect();
                 }
             } else if let Some(rest) = line.strip_prefix("imports:") {
                 if !rest.is_empty() {
-                    imports = rest.split(',').filter(|s| !s.is_empty()).map(|s| s.to_string()).collect();
+                    imports = rest
+                        .split(',')
+                        .filter(|s| !s.is_empty())
+                        .map(|s| s.to_string())
+                        .collect();
                 }
             } else if let Some(rest) = line.strip_prefix("built_at_ns:") {
                 built_at_ns = rest.parse().ok();
@@ -529,7 +563,8 @@ fn module_name_from_path(path: &Path, roots: &[PathBuf]) -> std::io::Result<Stri
     for root in roots {
         let canonical_root = fs::canonicalize(root).unwrap_or_else(|_| root.clone());
         if let Ok(rel) = path.strip_prefix(&canonical_root) {
-            let mut parts: Vec<String> = rel.iter()
+            let mut parts: Vec<String> = rel
+                .iter()
                 .map(|p| p.to_string_lossy().into_owned())
                 .collect();
             // Remove a extensão .lean do último componente.
@@ -615,13 +650,15 @@ fn resolve_module_path(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
 
     #[test]
     fn extract_imports_basic() {
         let text = "import A.B\nimport C\n-- import D\nimport E.F.G  -- comentário\n";
         let imports = extract_imports(text);
-        assert_eq!(imports, vec!["A.B".to_string(), "C".to_string(), "E.F.G".to_string()]);
+        assert_eq!(
+            imports,
+            vec!["A.B".to_string(), "C".to_string(), "E.F.G".to_string()]
+        );
     }
 
     #[test]
@@ -665,6 +702,7 @@ mod tests {
             imports: vec!["Init".to_string()],
             artifact_extensions: ARTIFACT_EXTENSIONS.iter().map(|s| s.to_string()).collect(),
             built_at_ns: Some(12345),
+            last_accessed_ns: Some(999),
         };
         store.save_trace("tracekey", &trace)?;
         let loaded = store.load_trace("tracekey")?.unwrap();

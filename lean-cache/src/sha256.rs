@@ -45,8 +45,8 @@ fn maj(x: u32, y: u32, z: u32) -> u32 {
 /// Computa o SHA-256 dos bytes fornecidos e retorna o digest hexadecimal (64 chars).
 pub fn sha256_hex(data: &[u8]) -> String {
     let mut h: [u32; 8] = [
-        0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
-        0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
+        0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
+        0x5be0cd19,
     ];
 
     let bit_len = (data.len() as u64) * 8;
@@ -61,7 +61,10 @@ pub fn sha256_hex(data: &[u8]) -> String {
         let mut w = [0u32; 64];
         for i in 0..16 {
             w[i] = u32::from_be_bytes([
-                chunk[i * 4], chunk[i * 4 + 1], chunk[i * 4 + 2], chunk[i * 4 + 3],
+                chunk[i * 4],
+                chunk[i * 4 + 1],
+                chunk[i * 4 + 2],
+                chunk[i * 4 + 3],
             ]);
         }
         for i in 16..64 {
@@ -73,9 +76,8 @@ pub fn sha256_hex(data: &[u8]) -> String {
                 .wrapping_add(s1);
         }
 
-        let (mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut hh) = (
-            h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7],
-        );
+        let (mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut hh) =
+            (h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7]);
         for i in 0..64 {
             let s1 = Sigma1(e);
             let ch_val = ch(e, f, g);
@@ -132,7 +134,10 @@ mod tests {
     #[test]
     fn empty_sha256_matches_known_value() {
         let h = sha256_hex(b"");
-        assert_eq!(h, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+        assert_eq!(
+            h,
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
     }
 
     #[test]
